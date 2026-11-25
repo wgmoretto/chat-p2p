@@ -34,6 +34,10 @@ export async function verify(signing, signature, values) {
   }
 }
 
+export function recoveryStatement(username, signing) {
+  return ['chat-p2p:setup-recovery:v1', username, signing];
+}
+
 export function packageStatement(id, group, keyPackage) {
   return ['chat-p2p:key-package:v1', id, group, keyPackage];
 }

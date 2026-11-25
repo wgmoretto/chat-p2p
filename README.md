@@ -20,7 +20,7 @@ npm.cmd start
 3. Crie uma sala do tipo **Reunião** e entre nas duas contas. Use **Microfone**, **Câmera** ou **Compartilhar tela** para publicar.
 4. Crie uma sala do tipo **Live**. Um membro pode iniciar uma transmissão e publicar câmera ou tela. Durante uma live, apenas esse membro pode publicar mídia.
 
-Use o mesmo perfil de navegador para voltar à conta. As chaves do dispositivo e o histórico já decifrado vivem no armazenamento do navegador. Limpar esses dados, usar um perfil temporário ou trocar de dispositivo perde o acesso às chaves. O piloto não tem recuperação nem migração de dispositivo. O arquivo SQLite local fica em `data/chat.sqlite`.
+Use o mesmo perfil de navegador para voltar à conta. As chaves do dispositivo e o histórico já decifrado vivem no armazenamento do navegador. Limpar esses dados, usar um perfil temporário ou mudar de endereço perde o acesso às chaves. Contas com participação em grupos precisam do perfil de origem. A primeira conta, enquanto a instalação ainda não tiver grupos, pode ser vinculada a outro navegador pelo procedimento abaixo. O arquivo SQLite local fica em `data/chat.sqlite`.
 
 ## Publicar no Easypanel
 
@@ -32,6 +32,7 @@ Use o mesmo perfil de navegador para voltar à conta. As chaves do dispositivo e
 | --- | --- |
 | `PUBLIC_ORIGIN` | Origem HTTPS da aplicação, por exemplo `https://chat.seudominio.com`. |
 | `BOOTSTRAP_TOKEN` | Segredo para cadastrar a primeira conta. Pode ser retirado após o cadastro. |
+| `SETUP_RECOVERY_TOKEN` | Código de uso único para vincular a primeira conta a outro navegador antes de criar grupos. Deixe vazio após usar. |
 | `TURN_SECRET` | Segredo compartilhado entre a API e o coturn para emitir credenciais temporárias. |
 | `TURN_REALM` | Hostname do TURN, por exemplo `turn.seudominio.com`. |
 | `TURN_EXTERNAL_IP` | IPv4 público anunciado pelo coturn. |
@@ -47,6 +48,17 @@ Use o mesmo perfil de navegador para voltar à conta. As chaves do dispositivo e
 O Compose publica TURN em UDP e TCP. Algumas redes exigem TURN/TLS, que precisa de certificado e porta próprios no coturn. WebRTC mantém o conteúdo cifrado entre os clientes também quando o relay usa TCP. Para usar um TURN separado, configure o mesmo segredo no relay externo e na API, informe as URLs públicas na API e remova o serviço `coturn` da configuração de deploy.
 
 Para hospedar em um Windows Server, use a mesma configuração em uma VM Linux com Hyper-V. Configure o HTTPS da aplicação na VM e o acesso externo às portas do coturn. Para backup do servidor, use um backup consistente do SQLite, incluindo o WAL quando aplicável, e teste a restauração. As chaves privadas do navegador não fazem parte desse backup.
+
+## Vincular a primeira conta a outro navegador
+
+Este procedimento serve quando a primeira conta foi criada no servidor, em outro navegador ou em um endereço como `localhost`, e ainda não há grupos na instalação.
+
+1. Em um terminal, gere um código com `node -p "require('node:crypto').randomBytes(32).toString('hex')"`.
+2. No serviço Compose do Easypanel, configure `SETUP_RECOVERY_TOKEN` com esse código. Redeploy preservando o volume `chat-data`.
+3. No navegador que você vai usar, abra a URL HTTPS pública da aplicação. Em **Vincular este navegador**, informe o usuário e a senha existentes e o código de recuperação.
+4. Após entrar, retire `SETUP_RECOVERY_TOKEN` das variáveis no Easypanel. O código já usado perde a validade, e as sessões anteriores da conta são encerradas.
+
+O procedimento mantém o usuário e a senha, gera uma chave no novo navegador e funciona enquanto a instalação tiver somente a primeira conta e nenhuma participação em grupos. Crie os grupos depois de vincular o navegador definitivo.
 
 ## Comportamento do piloto
 

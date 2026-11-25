@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { createIdentity, descriptionStatement, eventStatement, sign, verify } from '../shared/crypto.mjs';
+import { createIdentity, descriptionStatement, eventStatement, recoveryStatement, sign, verify } from '../shared/crypto.mjs';
 import { createApplication } from '../server/index.mjs';
 import { selectHost } from '../server/rooms.mjs';
 import { changeEncryptedGroup, encryptMessage, joinEncryptedGroup, makeKeyPackage,
@@ -69,7 +69,8 @@ test('eleição usa estabilidade e qualidade, com desempate determinístico', ()
 test('API exige origem, credenciais e assinatura e mantém evento idempotente', async (t) => {
   const front = 'http://localhost:3217';
   const token = 'bootstrap-test-that-is-long-enough';
-  const app = createApplication({ origin: front, bootstrap: token, database: ':memory:', serveStatic: false });
+  const recovery = 'unused-local-test-recovery-code-after-group';
+  const app = createApplication({ origin: front, bootstrap: token, recovery, database: ':memory:', serveStatic: false });
   app.server.listen(0, '127.0.0.1');
   await once(app.server, 'listening');
   t.after(() => app.stop());
@@ -98,10 +99,66 @@ test('API exige origem, credenciais e assinatura e mantém evento idempotente', 
   const ready = await (await call('groups/' + group + '/events')).json();
   assert.equal(ready.length, 1);
   assert.equal(ready[0].kind, 'init');
+  assert.equal((await (await call('session')).json()).recovery, false);
+  const replacement = await createIdentity();
+  assert.equal((await call('setup-recovery', {
+    username, password, code: recovery, signing: replacement.signing,
+    signature: await sign(replacement.privateKey, recoveryStatement(username, replacement.signing)),
+  })).status, 403);
   const invalid = { ...event, kind: 'message', roster: null, ciphertext: 'A'.repeat(60) };
   assert.equal((await call('groups/' + group + '/events', { event: invalid, expected: ready[0].seq })).status, 400);
   const { nonce } = await (await call('challenge', { username })).json();
   assert.equal((await call('login', { username, password, nonce, signature })).status, 401);
   assert.equal((await call('logout', {})).status, 200);
   assert.equal((await call('groups')).status, 401);
+});
+
+test('recuperação do cadastro exige código e senha, preserva a conta e invalida a sessão anterior', async (t) => {
+  const origin = 'http://localhost:3217';
+  const bootstrap = 'bootstrap-test-that-is-long-enough';
+  const code = 'one-time-local-test-recovery-code-001';
+  const app = createApplication({ origin, bootstrap, recovery: code, database: ':memory:', serveStatic: false });
+  app.server.listen(0, '127.0.0.1');
+  await once(app.server, 'listening');
+  t.after(() => app.stop());
+  const base = 'http://127.0.0.1:' + app.server.address().port + '/api/';
+  function post(path, body) {
+    return fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', origin },
+      body: JSON.stringify(body) });
+  }
+  const cookie = (response) => response.headers.get('set-cookie').split(';')[0];
+  const get = (path, session) => fetch(base + path, session ? { headers: { cookie: session } } : {});
+  const owner = await person('Admin', 'owner');
+  const username = 'admin';
+  const password = 'password-for-a-local-test';
+  const initial = await post('register', { id: owner.id, name: owner.name, username, password, signing: owner.signing,
+    signature: await sign(owner.privateKey, ['chat-p2p:register:v1', owner.id, username]), bootstrapToken: bootstrap });
+  assert.equal(initial.status, 200);
+  assert.equal((await (await get('session')).json()).recovery, true);
+  const originalCookie = cookie(initial);
+  const newDevice = await createIdentity();
+  const payload = { username, password, code, signing: newDevice.signing,
+    signature: await sign(newDevice.privateKey, recoveryStatement(username, newDevice.signing)) };
+  assert.equal((await post('setup-recovery', { ...payload, code: 'invalid' })).status, 403);
+  assert.equal((await post('setup-recovery', { ...payload, password: 'incorrect-test-password' })).status, 403);
+  assert.equal((await post('setup-recovery', { ...payload,
+    signature: await sign(owner.privateKey, recoveryStatement(username, newDevice.signing)),
+  })).status, 403);
+  assert.equal((await get('groups', originalCookie)).status, 200);
+
+  const result = await post('setup-recovery', payload);
+  assert.equal(result.status, 200);
+  assert.deepEqual(await result.json(), { id: owner.id, name: owner.name, username, signing: newDevice.signing });
+  assert.equal((await get('groups', originalCookie)).status, 401);
+  assert.equal((await get('groups', cookie(result))).status, 200);
+  assert.equal((await (await get('session')).json()).recovery, false);
+
+  const another = await createIdentity();
+  assert.equal((await post('setup-recovery', { ...payload, signing: another.signing,
+    signature: await sign(another.privateKey, recoveryStatement(username, another.signing)),
+  })).status, 403);
+  const { nonce } = await (await post('challenge', { username })).json();
+  assert.equal((await post('login', { username, password, nonce,
+    signature: await sign(owner.privateKey, ['chat-p2p:login:v1', username, nonce]),
+  })).status, 401);
 });

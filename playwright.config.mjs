@@ -20,6 +20,9 @@ export default defineConfig({
     command: 'node server/index.mjs',
     url: origin + '/healthz',
     reuseExistingServer: false,
-    env: { PUBLIC_ORIGIN: origin, BOOTSTRAP_TOKEN: 'local-browser-test-bootstrap-key', DATABASE_PATH: ':memory:', PORT: '3190' },
+    env: {
+      PUBLIC_ORIGIN: origin, BOOTSTRAP_TOKEN: 'local-browser-test-bootstrap-key',
+      SETUP_RECOVERY_TOKEN: 'local-only-test-browser-recovery-code', DATABASE_PATH: ':memory:', PORT: '3190',
+    },
   },
 });

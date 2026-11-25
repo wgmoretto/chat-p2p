@@ -41,13 +41,29 @@ async function newRoom(page, name, mode) {
 const navRoom = (page, name) => page.getByRole('navigation').getByRole('button', { name, exact: true });
 
 test('convite MLS, reunião P2P, troca de host, live e banimento', async ({ browser }, testInfo) => {
-  const contexts = await Promise.all(Array.from({ length: 3 }, () => browser.newContext()));
+  const contexts = await Promise.all(Array.from({ length: 4 }, () => browser.newContext()));
   try {
-    const [alice, bob, carol] = await Promise.all(contexts.map((ctx) => ctx.newPage()));
+    const [alice, bob, carol, serverBrowser] = await Promise.all(contexts.map((ctx) => ctx.newPage()));
     const faults = [];
     for (const page of [alice, bob, carol]) page.on('pageerror', (error) => faults.push(error.message));
+    await serverBrowser.goto('/');
+    await account(serverBrowser, 'Marina', 'marina', true);
+    await expect(serverBrowser.getByRole('heading', { name: 'Seus grupos' })).toBeVisible();
+
     await alice.goto('/');
-    await account(alice, 'Marina', 'marina', true);
+    await alice.getByLabel('Usuário').fill('marina');
+    await alice.getByLabel('Senha').fill('senha-para-teste-e2e');
+    await alice.getByRole('button', { name: 'Entrar', exact: true }).click();
+    await expect(alice.getByRole('alert')).toContainText('As chaves desta conta não estão neste navegador.');
+    await alice.getByRole('button', { name: 'Vincular este navegador' }).click();
+    await alice.getByLabel('Usuário').fill('marina');
+    await alice.getByLabel('Senha').fill('senha-para-teste-e2e');
+    await alice.getByLabel('Código de recuperação').fill('local-only-test-browser-recovery-code');
+    await alice.getByRole('button', { name: 'Vincular navegador' }).click();
+    await expect(alice.getByRole('heading', { name: 'Seus grupos' })).toBeVisible();
+    await expect(serverBrowser.getByRole('heading', { name: 'Entrar no Chat P2P' })).toBeVisible();
+    await alice.reload();
+    await expect(alice.getByRole('heading', { name: 'Seus grupos' })).toBeVisible();
     await alice.getByRole('button', { name: 'Novo grupo', exact: true }).last().click();
     await alice.getByRole('dialog').getByLabel('Nome').fill('Equipe');
     await alice.getByRole('dialog').getByRole('button', { name: 'Criar', exact: true }).click();

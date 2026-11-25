@@ -1,15 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Link2, LockKeyhole, Send, ShieldCheck, UserPlus, Users } from 'lucide-react';
-import { login, register } from './workspace.mjs';
+import { login, recoverAccount, register } from './workspace.mjs';
 
 export function Brand() {
   return <div className="brand"><Link2 aria-hidden="true" size={32} strokeWidth={2.7} /><span>Chat P2P</span></div>;
 }
 
-export function Access({ bootstrap, invite, onSession }) {
-  const [create, setCreate] = useState(Boolean(bootstrap || invite));
+export function Access({ bootstrap, recovery, invite, onSession }) {
+  const [mode, setMode] = useState(bootstrap || invite ? 'register' : 'login');
+  const create = mode === 'register';
+  const recover = mode === 'recovery';
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  function switchMode(next) { setMode(next); setError(''); }
 
   async function submit(event) {
     event.preventDefault();
@@ -17,7 +21,7 @@ export function Access({ bootstrap, invite, onSession }) {
     setError('');
     try {
       const form = Object.fromEntries(new FormData(event.currentTarget));
-      onSession(await (create ? register(form, invite) : login(form)));
+      onSession(await (recover ? recoverAccount(form) : create ? register(form, invite) : login(form)));
     } catch (problem) {
       setError(problem.message);
     } finally { setBusy(false); }
@@ -34,10 +38,11 @@ export function Access({ bootstrap, invite, onSession }) {
     </section>
     <section className="access-panel">
       <div className="access-form">
-        <h2>{create ? 'Criar conta' : 'Entrar no Chat P2P'}</h2>
-        <p className="muted">{invite
-          ? 'Use este convite para solicitar entrada no grupo.'
-          : create ? 'Configure a primeira conta desta instalação.' : 'Entre pelo navegador em que a conta foi criada.'}</p>
+        <h2>{recover ? 'Vincular este navegador' : create ? 'Criar conta' : 'Entrar no Chat P2P'}</h2>
+        <p className="muted">{recover
+          ? 'Use a senha da primeira conta e o código configurado no servidor. Isso encerra a sessão do navegador anterior.'
+          : invite ? 'Use este convite para solicitar entrada no grupo.'
+          : create ? 'Configure a primeira conta desta instalação.' : 'Entre pelo perfil e endereço usados para criar a conta.'}</p>
         <form onSubmit={submit}>
           {create && <label>Nome<input name="name" autoComplete="name" required maxLength={80} /></label>}
           <label>Usuário<input name="username" autoComplete="username" required minLength={3} maxLength={32}
@@ -46,12 +51,17 @@ export function Access({ bootstrap, invite, onSession }) {
             required minLength={12} maxLength={200} />{create && <small>Mínimo de 12 caracteres.</small>}</label>
           {create && !invite && <label>Código de instalação<input name="bootstrapToken" type="password"
             autoComplete="off" required minLength={24} /></label>}
+          {recover && <label>Código de recuperação<input name="recoveryCode" type="password"
+            autoComplete="off" required minLength={32} /></label>}
           {error && <p className="error" role="alert">{error}</p>}
-          <button className="primary wide" disabled={busy}>{create ? 'Criar conta' : 'Entrar'}<ArrowRight size={18} /></button>
+          <button className="primary wide" disabled={busy}>{recover ? 'Vincular navegador' : create ? 'Criar conta' : 'Entrar'}<ArrowRight size={18} /></button>
         </form>
-        {(bootstrap || invite) && <button className="text-button" disabled={busy} onClick={() => { setCreate(!create); setError(''); }}>
-          {create ? 'Já tenho conta' : 'Criar conta'}
-        </button>}
+        {recover
+          ? <button className="text-button" disabled={busy} onClick={() => switchMode('login')}>Voltar para entrar</button>
+          : (bootstrap || invite) && <button className="text-button" disabled={busy}
+              onClick={() => switchMode(create ? 'login' : 'register')}>{create ? 'Já tenho conta' : 'Criar conta'}</button>}
+        {recovery && !invite && mode === 'login' && <button className="text-button" disabled={busy}
+          onClick={() => switchMode('recovery')}>Vincular este navegador</button>}
       </div>
     </section>
   </main>;

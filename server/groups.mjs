@@ -86,6 +86,8 @@ export function groupService(db, hash, onRevoke) {
       JSON.stringify(roster) === JSON.stringify(event.roster) &&
       await verify(account.signing, event.signature, eventStatement(event)), 400, 'Identidade inicial do grupo inválida.');
     transaction(db, () => {
+      const device = db.prepare('SELECT signing FROM accounts WHERE id=?').get(account.id);
+      requireValue(device?.signing === account.signing, 401, 'Entre novamente para continuar.');
       const current = getGroup.get(id);
       if (current && current.owner === account.id && findEvent.get(event.id)) return;
       requireValue(!current, 409, 'Grupo já existe.');

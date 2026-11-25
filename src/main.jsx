@@ -240,7 +240,7 @@ function App() {
   if (!state) return <main className="startup"><Brand /><p role="status">Carregando…</p></main>;
   return session
     ? <Dashboard session={session} invite={invite} onLogout={exit} />
-    : <Access bootstrap={state.bootstrap} invite={invite} onSession={setSession} />;
+    : <Access bootstrap={state.bootstrap} recovery={state.recovery} invite={invite} onSession={setSession} />;
 }
 
 createRoot(document.getElementById('root')).render(<App />);

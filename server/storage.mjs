@@ -16,6 +16,9 @@ export function openDatabase(path) {
     CREATE TABLE IF NOT EXISTS sessions (
       hash TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES accounts(id), expires INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS setup_recoveries (
+      code_hash TEXT PRIMARY KEY
+    );
     CREATE TABLE IF NOT EXISTS groups (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL REFERENCES accounts(id), epoch INTEGER NOT NULL DEFAULT 0
     );

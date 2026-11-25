@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { packageStatement, verify } from '../shared/crypto.mjs';
+import { packageStatement, recoveryStatement, verify } from '../shared/crypto.mjs';
 import { openDatabase, transaction } from './storage.mjs';
 import { attachRooms } from './rooms.mjs';
 import { groupService, encoded, idPattern, shortName, HttpError, requireValue } from './groups.mjs';
@@ -68,6 +68,10 @@ export function createApplication(options = {}) {
   const cookieName = secure ? '__Host-chat-p2p' : 'chat-p2p-dev';
   const bootstrap = options.bootstrap ?? process.env.BOOTSTRAP_TOKEN ?? '';
   if (bootstrap && bootstrap.length < 24) throw new Error('BOOTSTRAP_TOKEN precisa ter pelo menos 24 caracteres.');
+  const recovery = options.recovery ?? process.env.SETUP_RECOVERY_TOKEN ?? '';
+  if (recovery && (recovery.length < 32 || recovery === bootstrap))
+    throw new Error('SETUP_RECOVERY_TOKEN precisa ter pelo menos 32 caracteres e ser diferente de BOOTSTRAP_TOKEN.');
+  const recoveryHash = recovery && hash(recovery);
   const turnSecret = options.turnSecret ?? process.env.TURN_SECRET ?? '';
   const turnUrls = (options.turnUrls ?? process.env.TURN_URLS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
   const stunUrls = (options.stunUrls ?? process.env.STUN_URLS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
@@ -82,6 +86,12 @@ export function createApplication(options = {}) {
   `);
   const countAccounts = db.prepare('SELECT count(*) AS count FROM accounts');
   const accountsByUsername = db.prepare('SELECT * FROM accounts WHERE username = ?');
+  const recoverableAccount = db.prepare(`
+    SELECT * FROM accounts
+    WHERE (SELECT count(*) FROM accounts) = 1
+      AND NOT EXISTS (SELECT 1 FROM members)
+      AND NOT EXISTS (SELECT 1 FROM setup_recoveries WHERE code_hash = ?)
+  `);
   const challenges = new Map();
   const authLimits = new Map();
   const group = groupService(db, hash, (groupId, accountId) => runtime.revoke(groupId, accountId));
@@ -141,6 +151,28 @@ export function createApplication(options = {}) {
     });
   }
 
+  async function recover(body, res) {
+    const username = normalizeUsername(body.username);
+    const { password, code, signing, signature } = body;
+    const message = 'Código, senha ou conta indisponível para recuperação.';
+    requireValue(recoveryHash && typeof code === 'string' && equal(code, recovery), 403, message);
+    const current = recoverableAccount.get(recoveryHash);
+    requireValue(current?.username === username && passwordValid(password) && encoded(signing, 110, 140) &&
+      signing !== current.signing && encoded(signature, 86, 86) &&
+      await verify(signing, signature, recoveryStatement(username, signing)), 403, message);
+    const valid = equal(await encodePassword(password, current.password.split(':')[0]), current.password);
+    requireValue(valid, 403, message);
+    return transaction(db, () => {
+      const updated = recoverableAccount.get(recoveryHash);
+      requireValue(updated?.id === current.id && updated.signing === current.signing && updated.password === current.password,
+        403, message);
+      db.prepare('UPDATE accounts SET signing=? WHERE id=?').run(signing, current.id);
+      db.prepare('DELETE FROM sessions WHERE account=?').run(current.id);
+      db.prepare('INSERT INTO setup_recoveries VALUES (?)').run(recoveryHash);
+      return issueSession(res, { ...current, signing });
+    });
+  }
+
   async function validateClaim(id, signing, { token, group, keyPackage, packageSignature }) {
     requireValue(encoded(token, 26, 100) && idPattern.test(group) && encoded(keyPackage, 80, 16000) &&
       encoded(packageSignature, 86, 86) && await verify(signing, packageSignature, packageStatement(id, group, keyPackage)),
@@ -152,11 +184,19 @@ export function createApplication(options = {}) {
     const method = req.method;
     const account = authenticate(req);
     if (method === 'GET' && pathname === '/api/session')
-      return { account: account ? userData(account) : null, bootstrap: Boolean(bootstrap) && !countAccounts.get().count };
+      return {
+        account: account ? userData(account) : null,
+        bootstrap: Boolean(bootstrap) && !countAccounts.get().count,
+        recovery: Boolean(recoveryHash && recoverableAccount.get(recoveryHash)),
+      };
     if (method === 'POST') requireValue(req.headers.origin === origin, 403, 'Origem da requisição inválida.');
     if (method === 'POST' && pathname === '/api/register') {
       limitAuth(req);
       return register(await payload(req), res);
+    }
+    if (method === 'POST' && pathname === '/api/setup-recovery') {
+      limitAuth(req);
+      return recover(await payload(req), res);
     }
     if (method === 'POST' && pathname === '/api/challenge') {
       limitAuth(req);
@@ -178,7 +218,7 @@ export function createApplication(options = {}) {
         await verify(target.signing, signature, ['chat-p2p:login:v1', username, nonce]),
       401, 'Usuário, senha ou dispositivo inválido.');
       const valid = equal(await encodePassword(password, target.password.split(':')[0]), target.password);
-      requireValue(valid, 401, 'Usuário, senha ou dispositivo inválido.');
+      requireValue(valid && accountsByUsername.get(username)?.signing === target.signing, 401, 'Usuário, senha ou dispositivo inválido.');
       return issueSession(res, target);
     }
 

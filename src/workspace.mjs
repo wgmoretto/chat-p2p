@@ -1,9 +1,10 @@
-import { createIdentity, eventStatement, packageStatement, sign, verify } from '../shared/crypto.mjs';
+import { createIdentity, eventStatement, packageStatement, recoveryStatement, sign, verify } from '../shared/crypto.mjs';
 import { changeEncryptedGroup, encryptMessage, joinEncryptedGroup, makeKeyPackage,
   readEncryptedEvent, startGroup, wipeConsumed } from './mls.mjs';
 import { localGet, localSet, request } from './local.mjs';
 
 const accountKey = (username) => 'account/' + username;
+const recoveryKey = (username) => 'setup-recovery/' + username;
 const dataKey = (account, group) => 'group/' + account.id + '/' + group;
 const endpoint = (group, resource) => 'groups/' + group.id + '/' + resource;
 const emptyGroup = () => ({ seq: 0, epoch: 0, roster: [], messages: [] });
@@ -54,21 +55,53 @@ export async function register(form, invite) {
   });
 }
 
-export async function login(form) {
-  const username = form.username.trim().toLowerCase();
-  const identity = await localGet(accountKey(username));
-  if (!identity) throw Error('As chaves desta conta não estão neste navegador.');
-  const { nonce } = await request('challenge', { username });
-  const signature = await sign(identity.privateKey, ['chat-p2p:login:v1', username, nonce]);
-  const account = await request('login', { username, password: form.password, signature, nonce });
+async function finishRecovery(account, pending) {
+  const identity = { ...pending, id: account.id };
+  await localSet(accountKey(account.username), identity);
+  await localSet(recoveryKey(account.username), null);
   return { account, identity };
 }
 
+export async function recoverAccount(form) {
+  const username = form.username.trim().toLowerCase();
+  return locked(accountKey(username), async () => {
+    const pending = await localGet(recoveryKey(username)) ?? await createIdentity();
+    await localSet(recoveryKey(username), pending);
+    const signature = await sign(pending.privateKey, recoveryStatement(username, pending.signing));
+    const account = await request('setup-recovery', {
+      username, password: form.password, code: form.recoveryCode, signing: pending.signing, signature,
+    });
+    return finishRecovery(account, pending);
+  });
+}
+
+export async function login(form) {
+  const username = form.username.trim().toLowerCase();
+  return locked(accountKey(username), async () => {
+    const local = await localGet(accountKey(username));
+    const pending = await localGet(recoveryKey(username));
+    const candidates = [local, pending].filter(Boolean);
+    if (!candidates.length) throw Error('As chaves desta conta não estão neste navegador. Use o mesmo perfil e endereço do cadastro.');
+    for (const identity of candidates) {
+      const { nonce } = await request('challenge', { username });
+      const signature = await sign(identity.privateKey, ['chat-p2p:login:v1', username, nonce]);
+      try {
+        const account = await request('login', { username, password: form.password, signature, nonce });
+        return identity === pending ? finishRecovery(account, pending) : { account, identity };
+      } catch (error) {
+        if (error.status !== 401 || identity === candidates.at(-1)) throw error;
+      }
+    }
+  });
+}
+
 export async function restore(account) {
-  const identity = await localGet(accountKey(account.username));
-  if (identity?.id !== account.id || identity.signing !== account.signing)
-    throw Error('As chaves desta conta não estão neste navegador.');
-  return { account, identity };
+  return locked(accountKey(account.username), async () => {
+    const identity = await localGet(accountKey(account.username));
+    if (identity?.id === account.id && identity.signing === account.signing) return { account, identity };
+    const pending = await localGet(recoveryKey(account.username));
+    return pending?.signing === account.signing ? finishRecovery(account, pending) : null;
+  });
 }
 
 export async function requestAdmission(session, invite) {
