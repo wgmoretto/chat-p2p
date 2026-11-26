@@ -208,6 +208,11 @@ export function createApplication(options = {}) {
       transaction(db, () => group.claim(claim.token, claim.group, account.id, claim.keyPackage, claim.packageSignature));
       return {};
     }
+    const rename = pathname.match(/^\/api\/groups\/([0-9a-f-]{36})\/rooms\/([0-9a-f-]{36})\/rename$/);
+    if (method === 'POST' && rename) {
+      return group.renameRoom(rename[1], account.id, rename[2], (await payload(req)).name);
+    }
+
     const route = pathname.match(/^\/api\/groups\/([0-9a-f-]{36})\/(events|pending|people|invite|rooms|ice)$/);
     if (route) {
       const [, id, part] = route;

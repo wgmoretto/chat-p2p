@@ -194,6 +194,16 @@ export function groupService(db, hash, onRevoke) {
       check(groupId, accountId);
       return db.prepare('SELECT id,name,mode FROM rooms WHERE group_id=? ORDER BY created DESC LIMIT 100').all(groupId);
     },
+    renameRoom(groupId, accountId, roomId, name) {
+      const { group, membership } = check(groupId, accountId);
+      requireValue(group.chat_mode !== 'contact', 404, 'Grupo indisponível.');
+      requireValue(['owner','moderator'].includes(membership.role), 403, 'Você não tem permissão para essa ação.');
+      requireValue(shortName(name), 400, 'Informe o nome da sala.');
+      const room = db.prepare('UPDATE rooms SET name=? WHERE id=? AND group_id=? RETURNING id,name,mode')
+        .get(name.trim(), roomId, groupId);
+      requireValue(room, 404, 'Sala indisponível.');
+      return room;
+    },
     createRoom(groupId, accountId, { name, mode }) {
       const { group } = check(groupId, accountId);
       requireValue(group.chat_mode !== 'contact', 404, 'Grupo indisponível.');

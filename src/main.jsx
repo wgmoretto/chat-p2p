@@ -1,40 +1,71 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowUpRight, CircleHelp, LockKeyhole, LogOut, Plus, Radio, UserRound, Users, Video } from 'lucide-react';
-import { request } from './local.mjs';
+import { ArrowLeft, ArrowUpRight, CircleHelp, LockKeyhole, LogOut, Menu, Pencil, Plus, Radio, UserRound, Users, Video, X } from 'lucide-react';
+import { readPreference, request, writePreference } from './local.mjs';
 import { changeMembership, makeInvite, newGroup, postGroupMessage, readInvite,
   requestAdmission, restore, syncGroup } from './workspace.mjs';
-import { Access, Brand, Conversation, initials, Modal, People } from './views.jsx';
+import { Access, Brand, Conversation, initials, Modal, People, ThemePicker } from './views.jsx';
 import { Meeting } from './Meeting.jsx';
 import { Friends } from './Friends.jsx';
 import './style.css';
 
-function Sidebar({ groups, group, groupRooms, room, canJoin, friendsNotice, showFriends, select, enter, create, logout, session }) {
+function Sidebar({ groups, group, groupRooms, room, contact, canJoin, friendsNotice, showFriends, select, enter, create, logout, session, appearance }) {
+  const [expanded, setExpanded] = useState(false);
+  const navigate = (action) => { setExpanded(false); action(); };
   return <aside className="sidebar">
-    <Brand />
-    <nav aria-label="Grupos e salas">
-      <button className="nav-item" aria-current={!group ? 'true' : undefined} onClick={showFriends}>
-        <UserRound size={19} /><span>Amigos</span>{friendsNotice > 0 && <span className="nav-count">{friendsNotice}</span>}
+    <div className="sidebar-top">
+      <Brand />
+      <button className="icon mobile-nav-toggle" aria-label={expanded ? 'Fechar navegação' : 'Abrir navegação'}
+        aria-expanded={expanded} aria-controls="workspace-nav" onClick={() => setExpanded(!expanded)}>
+        {expanded ? <X size={22} /> : <Menu size={22} />}
       </button>
-      <div className="nav-heading"><h2>Grupos</h2><button className="icon" aria-label="Novo grupo" onClick={() => create('group')}><Plus size={19} /></button></div>
-      <ul>{groups.map((item) => <li key={item.id}><button className="nav-item" aria-current={item.id === group?.id ? 'true' : undefined}
-        onClick={() => select(item.id)}><Users size={19} /><span>{item.name}</span></button></li>)}</ul>
-      {group?.status === 'active' && <>
-        <div className="nav-heading"><h2>Salas</h2><button className="icon" aria-label="Nova sala" disabled={!canJoin} onClick={() => create('room')}><Plus size={19} /></button></div>
-        <ul>{groupRooms.map((item) => <li key={item.id}><button className="nav-item" aria-current={item.id === room?.id ? 'true' : undefined}
-          disabled={!canJoin} onClick={() => enter(item)}>{item.mode === 'live' ? <Radio size={19} /> : <Video size={19} />}<span>{item.name}</span></button></li>)}</ul>
-        {!groupRooms.length && <p className="nav-empty">Nenhuma sala neste grupo</p>}
-      </>}
-    </nav>
-    <div className="account">
-      <span className="avatar solid" aria-hidden="true">{initials(session.account.name)}</span>
-      <div><strong>{session.account.name}</strong><small>@{session.account.username}</small></div>
-      <button className="icon" onClick={logout} aria-label="Sair da conta"><LogOut size={19} /></button>
+    </div>
+    <div id="workspace-nav" className="sidebar-body" data-expanded={expanded}>
+      <nav aria-label="Grupos e salas">
+        <button className="nav-item" aria-current={!group && !contact ? 'page' : undefined} onClick={() => navigate(showFriends)}>
+          <UserRound size={19} /><span>Amigos</span>{friendsNotice > 0 && <span className="nav-count">{friendsNotice}</span>}
+        </button>
+        <div className="nav-heading"><h2>Grupos</h2><button className="icon" aria-label="Novo grupo" onClick={() => navigate(() => create('group'))}><Plus size={19} /></button></div>
+        <ul>{groups.map((item) => <li key={item.id}><button className="nav-item" aria-current={item.id === group?.id && !room ? 'page' : undefined}
+          onClick={() => navigate(() => select(item.id))}><Users size={19} /><span>{item.name}</span></button></li>)}</ul>
+        {group?.status === 'active' && <>
+          <div className="nav-heading"><h2>Salas</h2><button className="icon" aria-label="Nova sala" disabled={!canJoin} onClick={() => navigate(() => create('room'))}><Plus size={19} /></button></div>
+          <ul>{groupRooms.map((item) => <li key={item.id}><button className="nav-item" aria-current={item.id === room?.id ? 'page' : undefined}
+            disabled={!canJoin} onClick={() => navigate(() => enter(item))}>{item.mode === 'live' ? <Radio size={19} /> : <Video size={19} />}<span>{item.name}</span></button></li>)}</ul>
+          {!groupRooms.length && <p className="nav-empty">Nenhuma sala neste grupo</p>}
+        </>}
+      </nav>
+      <div className="sidebar-footer">
+        {appearance}
+        <div className="account">
+          <span className="avatar solid" aria-hidden="true">{initials(session.account.name)}</span>
+          <div><strong>{session.account.name}</strong><small>@{session.account.username}</small></div>
+          <button className="icon" onClick={logout} aria-label="Sair da conta"><LogOut size={19} /></button>
+        </div>
+      </div>
     </div>
   </aside>;
 }
 
-function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
+function GroupRooms({ rooms, ready, canJoin, enter, canManage, rename }) {
+  return <div className="group-rooms">
+    <h2>Salas do grupo</h2>
+    {!rooms.length && <p className="muted">{ready ? 'Nenhuma sala neste grupo.' : 'Carregando salas…'}</p>}
+    <ul>{rooms.map((item) => {
+      const Icon = item.mode === 'live' ? Radio : Video;
+      return <li key={item.id}>
+        <span className="room-symbol"><Icon size={19} aria-hidden="true" /></span>
+        <span className="person-label"><strong>{item.name}</strong><small>{item.mode === 'live' ? 'Live' : 'Reunião'}</small></span>
+        <div className="room-actions">
+          {canManage && <button className="icon" aria-label={'Renomear ' + item.name} title="Renomear sala" onClick={() => rename(item)}><Pencil size={17} /></button>}
+          <button aria-label={'Entrar em ' + item.name} disabled={!canJoin} onClick={() => enter(item)}>Entrar <ArrowUpRight size={16} /></button>
+        </div>
+      </li>;
+    })}</ul>
+  </div>;
+}
+
+function Dashboard({ session, invite: invitation, clearInvite, onLogout, appearance }) {
   const [groups, setGroups] = useState([]);
   const [friends, setFriends] = useState([]);
   const [contactId, setContactId] = useState(null);
@@ -43,9 +74,10 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
   const [roomList, setRoomList] = useState({ id: null, rooms: [] });
   const [groupView, setGroupView] = useState(null);
   const [dialog, setDialog] = useState(null);
+  const [roomToRename, setRoomToRename] = useState(null);
   const [link, setLink] = useState('');
   const [copied, setCopied] = useState(false);
-  const [tab, setTab] = useState('chat');
+  const [tab, setTab] = useState('rooms');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -54,12 +86,13 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
   const group = groups.find(({ id }) => id === selected);
   const active = group?.status === 'active';
   const owner = group?.role === 'owner';
+  const canManageRooms = owner || group?.role === 'moderator';
   const legacy = group?.chat_mode === 'mls';
   const snapshot = groupView?.id === group?.id ? groupView : null;
   const record = snapshot?.record;
   const canJoin = active && (!legacy || !!record);
   const roomListForGroup = roomList.id === group?.id ? roomList.rooms : [];
-  const activeRoom = canJoin && roomListForGroup.some(({ id }) => id === room?.id) ? room : null;
+  const activeRoom = canJoin ? roomListForGroup.find(({ id }) => id === room?.id) : null;
   const contact = friends.find(({ id, roomId }) => id === contactId && roomId);
   const friendsNotice = friends.filter(({ roomId, incoming, calling, id }) =>
     (!roomId && incoming) || (calling && id !== contactId)).length;
@@ -118,7 +151,7 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
     enter(null);
     setContactId(null);
     select(id);
-    setTab('chat');
+    setTab('rooms');
     setError('');
   }
   function openContact(person) {
@@ -126,7 +159,13 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
     setContactId(person.id);
   }
 
-  function open(kind) {
+  function enterRoom(item) {
+    enter(item);
+    setError('');
+  }
+
+  function open(kind, target = null) {
+    setRoomToRename(target);
     setError('');
     setLink('');
     setCopied(false);
@@ -151,6 +190,12 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
         setDialog(null);
       } else if (dialog === 'invite') {
         setLink(await makeInvite(group, data.role));
+      } else if (dialog === 'rename') {
+        const updated = await request('groups/' + group.id + '/rooms/' + roomToRename.id + '/rename', { name: data.name });
+        setRoomList((current) => current.id === group.id
+          ? { ...current, rooms: current.rooms.map((item) => item.id === updated.id ? updated : item) }
+          : current);
+        setDialog(null);
       } else {
         const mode = dialog === 'live' ? 'live' : data.mode;
         const created = await request('groups/' + group.id + '/rooms', { name: data.name, mode });
@@ -191,19 +236,19 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
   }
 
   return <div className="workspace">
-    <Sidebar groups={groups} group={group} groupRooms={roomListForGroup} room={activeRoom} session={session}
+    <Sidebar groups={groups} group={group} groupRooms={roomListForGroup} room={activeRoom} contact={contact} session={session} appearance={appearance}
       canJoin={canJoin} friendsNotice={friendsNotice} showFriends={() => switchGroup(null)}
-      select={switchGroup} enter={(item) => { enter(item); setError(''); }} create={open}
+      select={switchGroup} enter={enterRoom} create={open}
       logout={() => run(async () => { await request('logout', {}); onLogout(); })} />
     <main className="main-panel">
       <header className="workspace-header">
         <div>
-          {activeRoom && <button className="breadcrumb" onClick={() => enter(null)}>{group.name} <span aria-hidden="true">›</span></button>}
-          {contact && <button className="breadcrumb" onClick={() => setContactId(null)}>Amigos <span aria-hidden="true">›</span></button>}
+          {activeRoom && <button className="breadcrumb" onClick={() => enter(null)}><ArrowLeft size={16} aria-hidden="true" /> {group.name}</button>}
+          {contact && <button className="breadcrumb" onClick={() => setContactId(null)}><ArrowLeft size={16} aria-hidden="true" /> Amigos</button>}
           <h1>{activeRoom?.name ?? group?.name ?? contact?.name ?? 'Amigos'}</h1>
         </div>
-        {active && <div className="header-actions">
-          {!activeRoom && canJoin && <button onClick={() => open('room')}><Plus size={17} /> Nova sala</button>}
+        {active && !activeRoom && <div className="header-actions">
+          {canJoin && <button onClick={() => open('room')}><Plus size={17} /> Nova sala</button>}
           {owner && canJoin && <button className="primary" onClick={() => open('invite')}><Users size={19} /> Convidar</button>}
         </div>}
       </header>
@@ -217,19 +262,22 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
           update={(person, action) => changeFriends('friends/action', { id: person.id, action })} />
         : activeRoom ? <Meeting key={activeRoom.id} room={activeRoom} group={group} session={session} verified={record?.roster}
           leave={() => enter(null)} report={report} createLive={() => open('live')} />
-        : active ? <section className="group-view" aria-label="Conversa do grupo">
-          <div className="pane-tabs">
+        : active ? <section className="group-view" aria-label="Gerenciamento do grupo">
+          <div className="pane-tabs" aria-label="Seções do grupo">
+            <button aria-pressed={tab === 'rooms'} onClick={() => setTab('rooms')}>Salas <span>{roomListForGroup.length}</span></button>
             {legacy && session.identity && <button aria-pressed={tab === 'chat'} onClick={() => setTab('chat')}>Chat do grupo</button>}
-            <button aria-pressed={!legacy || !session.identity || tab === 'people'} onClick={() => setTab('people')}>Pessoas
+            <button aria-pressed={tab === 'people'} onClick={() => setTab('people')}>Pessoas
               {snapshot?.pending.length > 0 && <span>{snapshot.pending.length}</span>}</button>
           </div>
-          {legacy && session.identity && tab === 'chat' ? <Conversation key={group.id} messages={record?.messages ?? []} roster={record?.roster ?? []}
+          {tab === 'rooms'
+            ? <GroupRooms rooms={roomListForGroup} ready={roomList.id === group.id} canJoin={canJoin} enter={enterRoom}
+              canManage={canJoin && canManageRooms} rename={(item) => open('rename', item)} />
+            : legacy && session.identity && tab === 'chat' ? <Conversation key={group.id} messages={record?.messages ?? []} roster={record?.roster ?? []}
             available={Boolean(record)} busy={busy} label="Chat do grupo" empty={record ? 'Nenhuma mensagem no grupo.' : 'Sincronizando as chaves do grupo…'}
             onSend={(text) => run(async () => update(group.id, await postGroupMessage(session, group, text)))} />
             : <People roster={record?.roster ?? snapshot?.people ?? []} pending={snapshot?.pending} busy={busy}
               verified={!!record} approve={(person) => membership(person, 'add')}
               change={owner && canJoin ? membership : undefined} />}
-          {!legacy && <p className="group-hint muted">Abra uma sala para conversar. As mensagens duram enquanto a sessão estiver aberta.</p>}
           {legacy && !session.identity && <p className="group-hint muted">O histórico e as salas deste grupo cifrado usam as chaves do navegador original.</p>}
         </section>
         : <section className="empty-workspace">
@@ -238,7 +286,7 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
           <p>O dono do grupo precisa aprovar a entrada deste dispositivo.</p>
         </section>}
     </main>
-    {dialog && <Modal title={{ group: 'Novo grupo', room: 'Nova sala', live: 'Nova live', invite: 'Convidar para o grupo' }[dialog]}
+    {dialog && <Modal title={{ group: 'Novo grupo', room: 'Nova sala', live: 'Nova live', invite: 'Convidar para o grupo', rename: 'Renomear sala' }[dialog]}
       close={() => { if (!busy) setDialog(null); }}>
       <form onSubmit={save}>
         {dialog === 'invite' ? <>
@@ -246,7 +294,7 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
           {link && <label>Link de convite<input value={link} readOnly onFocus={(event) => event.target.select()} /></label>}
           <p className="muted">O link vale por 24 horas e pode ser usado uma vez.{legacy && ' O dono aprova a entrada neste grupo cifrado.'}</p>
         </> : <>
-          <label>Nome<input name="name" autoFocus required maxLength={80} /></label>
+          <label>Nome<input name="name" autoFocus required maxLength={80} defaultValue={roomToRename?.name} /></label>
           {dialog === 'room' && <label>Tipo<select name="mode"><option value="meet">Reunião</option><option value="live">Live</option></select></label>}
         </>}
         {error && <p className="error" role="alert">{error}</p>}
@@ -254,14 +302,25 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout }) {
           <button type="button" onClick={() => setDialog(null)} disabled={busy}>{link ? 'Fechar' : 'Cancelar'}</button>
           {link ? <button type="button" className="primary" onClick={() => navigator.clipboard.writeText(link)
             .then(() => setCopied(true)).catch(report)}>{copied ? 'Copiado' : 'Copiar link'}</button>
-            : <button className="primary" disabled={busy}>{dialog === 'invite' ? 'Gerar convite' : 'Criar'}</button>}
+            : <button className="primary" disabled={busy}>{dialog === 'invite' ? 'Gerar convite' : dialog === 'rename' ? 'Salvar nome' : 'Criar'}</button>}
         </div>
       </form>
     </Modal>}
   </div>;
 }
 
+const themes = ['system', 'light', 'dark'];
+const savedTheme = readPreference('theme');
+const initialTheme = themes.includes(savedTheme) ? savedTheme : 'system';
+document.documentElement.dataset.theme = initialTheme;
+
 function App() {
+  const [theme, setTheme] = useState(initialTheme);
+  const appearance = <ThemePicker theme={theme} change={(value) => {
+    document.documentElement.dataset.theme = value;
+    writePreference('theme', value);
+    setTheme(value);
+  }} />;
   const [session, setSession] = useState(null);
   const [state, setState] = useState(null);
   const [problem, setProblem] = useState('');
@@ -286,8 +345,8 @@ function App() {
   if (problem) return <main className="startup"><Brand /><p role="alert"><CircleHelp size={20} /> {problem}</p></main>;
   if (!state) return <main className="startup"><Brand /><p role="status">Carregando…</p></main>;
   return session
-    ? <Dashboard session={session} invite={invite} clearInvite={() => setInvite(null)} onLogout={exit} />
-    : <Access bootstrap={state.bootstrap} signup={state.signup} invite={invite}
+    ? <Dashboard session={session} invite={invite} clearInvite={() => setInvite(null)} onLogout={exit} appearance={appearance} />
+    : <Access bootstrap={state.bootstrap} signup={state.signup} invite={invite} appearance={appearance}
         onSession={(value) => { setSession(value); setInvite(readInvite()); }} />;
 }
 

@@ -27,6 +27,15 @@ export async function localSet(key, value) {
   });
 }
 
+export function readPreference(name, fallback = '') {
+  try { return localStorage.getItem('chat-p2p:' + name) ?? fallback; }
+  catch { return fallback; }
+}
+
+export function writePreference(name, value) {
+  try { localStorage.setItem('chat-p2p:' + name, value); } catch {}
+}
+
 export async function request(path, body) {
   const result = await fetch('/api/' + path, body === undefined ? {} : {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),

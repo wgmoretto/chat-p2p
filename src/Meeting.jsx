@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AudioLines, Camera, CameraOff, Crown, Mic, MicOff, MonitorUp, PhoneOff, Radio, ScreenShareOff, Users, Video } from 'lucide-react';
-import { RoomConnection } from './room.mjs';
+import { AudioLines, Camera, CameraOff, Crown, Maximize, MessageSquare, Mic, MicOff, Minimize, MonitorUp, PhoneOff, Radio, ScreenShareOff, Users, Video, X } from 'lucide-react';
+import { RoomConnection, videoProfiles } from './room.mjs';
 import { request } from './local.mjs';
 import { Conversation, initials } from './views.jsx';
 
-function Media({ stream, muted, audio = false, label }) {
+function Media({ stream, muted, audio = false, label, onResolution }) {
   const ref = useRef(null);
   useEffect(() => {
     if (!ref.current) return;
@@ -15,13 +15,75 @@ function Media({ stream, muted, audio = false, label }) {
   }, [stream]);
   return audio
     ? <audio ref={ref} autoPlay aria-label={label} />
-    : <video ref={ref} autoPlay playsInline muted={muted} aria-label={label} />;
+    : <video ref={ref} autoPlay playsInline muted={muted} aria-label={label}
+      onResize={onResolution} onLoadedMetadata={onResolution} />;
+}
+
+function StreamViewer({ stream, label, close }) {
+  const ref = useRef(null);
+  const content = useRef(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [resolution, setResolution] = useState('');
+  useEffect(() => {
+    const dialog = ref.current;
+    const sync = () => setFullscreen(document.fullscreenElement === content.current);
+    dialog.showModal();
+    document.addEventListener('fullscreenchange', sync);
+    return () => {
+      document.removeEventListener('fullscreenchange', sync);
+      if (dialog.open) dialog.close();
+    };
+  }, []);
+
+  function readResolution({ currentTarget: { videoWidth, videoHeight } }) {
+    if (videoWidth && videoHeight) setResolution(videoWidth + ' × ' + videoHeight);
+  }
+
+  function dismiss() {
+    ref.current.close();
+    close();
+  }
+
+  async function toggleFullscreen() {
+    try {
+      if (fullscreen) await document.exitFullscreen();
+      else await content.current.requestFullscreen();
+    } catch {
+      // The dialog already fills the viewport when the browser blocks native fullscreen.
+    }
+  }
+
+  return <dialog ref={ref} className="stream-viewer" aria-label={label} onCancel={(event) => { event.preventDefault(); dismiss(); }}>
+    <div className="stream-viewer-content" ref={content}>
+      <header>
+        <div><h2>{label}</h2>{resolution && <small>Resolução atual: {resolution}</small>}</div>
+        <div className="stream-actions">
+          {document.fullscreenEnabled && <button onClick={toggleFullscreen} aria-label={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}>
+            {fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+            <span>{fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}</span>
+          </button>}
+          <button autoFocus title="Fechar visualização" aria-label="Fechar visualização" onClick={dismiss}><X size={21} /></button>
+        </div>
+      </header>
+      <Media stream={stream} muted label={label} onResolution={readResolution} />
+    </div>
+  </dialog>;
+}
+
+function VisualStream({ stream, label }) {
+  const [expanded, setExpanded] = useState(false);
+  return <>
+    <Media stream={stream} muted label={label} />
+    <button className="stream-expand" aria-label={'Maximizar ' + label.toLocaleLowerCase('pt-BR')}
+      title="Maximizar" onClick={() => setExpanded(true)}><Maximize size={17} /></button>
+    {expanded && <StreamViewer stream={stream} label={label} close={() => setExpanded(false)} />}
+  </>;
 }
 
 function Tile({ person, host }) {
   const camera = person.media.camera;
   return <div className="tile">
-    {camera ? <Media stream={camera} muted label={'Câmera de ' + person.name} />
+    {camera ? <VisualStream stream={camera} label={'Câmera de ' + person.name} />
       : <span aria-hidden="true" className="tile-avatar">{initials(person.name)}</span>}
     {!person.self && person.media.mic && <Media audio stream={person.media.mic} label={'Áudio de ' + person.name} />}
     <span className="tile-label">{person.name}{person.self ? ' (você)' : ''}{host && <Crown size={14} aria-label="Host" />}</span>
@@ -65,6 +127,8 @@ export function Meeting({ room, group, session, verified, leave, report, createL
   const [tab, setTab] = useState('chat');
   const [capturing, setCapturing] = useState(false);
   const [sending, setSending] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [changingQuality, setChangingQuality] = useState(false);
   const isLive = room.mode === 'live';
   useEffect(() => {
     const connection = new RoomConnection(room, group, session, roster.current, setState, report);
@@ -78,7 +142,7 @@ export function Meeting({ room, group, session, verified, leave, report, createL
   const presentations = state.people.filter((person) => person.media.screen);
   const onStage = isLive && state.publisher ? state.people.filter(({ id }) => id === state.publisher) : state.people;
   const people = state.people.length;
-  const canCapture = self && state.canPublish && !capturing && !state.closed;
+  const canCapture = self && state.canPublish && !capturing && !changingQuality && !state.closed;
   const connected = state.status === 'Conectado';
 
   async function toggle(kind) {
@@ -90,16 +154,23 @@ export function Meeting({ room, group, session, verified, leave, report, createL
     } finally { setCapturing(false); }
   }
 
-  return <div className="meeting">
+  async function changeQuality(event) {
+    setChangingQuality(true);
+    try { await runtime.current.setQuality(Number(event.target.value)); }
+    catch (problem) { report(problem); }
+    finally { setChangingQuality(false); }
+  }
+
+  return <div className={'meeting' + (panelOpen ? '' : ' panel-hidden')}>
     <section className="meeting-center" aria-label="Vídeo da sala">
-      <div className="stage">
-        <div className="stage-status">
+      <div className={'stage' + (presentations.length ? ' stage-presenting' : '')}>
+        <div className="stage-status" aria-live="polite">
           {state.publisher && <span className="live-indicator"><Radio size={16} /> Ao vivo</span>}
           <span className="connection-indicator"><AudioLines size={16} /> {state.media}</span>
         </div>
         {presentations.length > 0 ? <>
           <div className="screens">{presentations.map((person) => <div className="screen" key={person.id}>
-            <Media stream={person.media.screen} muted label={'Tela de ' + person.name} />
+            <VisualStream stream={person.media.screen} label={'Tela de ' + person.name} />
             <span className="tile-label">Tela de {person.name}</span>
           </div>)}</div>
           <div className="tiles thumbnails">{onStage.map((person) => <Tile key={person.id} person={person} host={person.id === state.host} />)}</div>
@@ -127,15 +198,18 @@ export function Meeting({ room, group, session, verified, leave, report, createL
               onClick={() => runtime.current.send({ type: state.publisher === session.account.id ? 'live.stop' : 'live.start' })}>
             <Radio size={19} /> {state.publisher === session.account.id ? 'Encerrar live' : 'Iniciar live'}</button>
           : createLive && <button onClick={createLive}><Radio size={19} /> Criar live</button>}
+        <button aria-expanded={panelOpen} aria-controls="meeting-panel" onClick={() => setPanelOpen(!panelOpen)}>
+          <MessageSquare size={17} /> {panelOpen ? 'Ocultar painel' : 'Mostrar painel'}</button>
+        {(!isLive || state.publisher === session.account.id) &&
+          <label className="quality" title="A resolução efetiva depende da fonte e da rede">Qualidade de envio
+            <select value={state.quality} onChange={changeQuality} disabled={!self || capturing || changingQuality || state.closed}>
+              {Object.keys(videoProfiles).map((quality) => <option key={quality} value={quality}>{quality}p</option>)}
+            </select>
+          </label>}
         <button className="danger" onClick={leave}><PhoneOff size={19} /> Sair da sala</button>
       </div>
-      {isLive && <label className="quality">Qualidade máxima de vídeo
-        <select value={state.quality} onChange={(event) => void runtime.current.setQuality(Number(event.target.value))}>
-          <option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option>
-        </select>
-      </label>}
     </section>
-    <aside className="chat-panel">
+    <aside id="meeting-panel" className="chat-panel" hidden={!panelOpen}>
       <div className="pane-tabs" aria-label="Painel da sala">
         <button aria-pressed={tab === 'chat'} onClick={() => setTab('chat')}>Chat da sala</button>
         <button aria-pressed={tab === 'people'} onClick={() => setTab('people')}>Pessoas <span>{people}</span></button>

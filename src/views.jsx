@@ -1,12 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Link2, LockKeyhole, Send, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { ArrowRight, Link2, LockKeyhole, Monitor, Moon, Send, ShieldCheck, Sun, UserPlus, Users } from 'lucide-react';
 import { login, register } from './workspace.mjs';
 
 export function Brand() {
   return <div className="brand"><Link2 aria-hidden="true" size={32} strokeWidth={2.7} /><span>Chat P2P</span></div>;
 }
 
-export function Access({ bootstrap, signup, invite, onSession }) {
+export function ThemePicker({ theme, change }) {
+  const Icon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
+  return <label className="theme-picker"><Icon size={17} aria-hidden="true" /><span className="sr-only">Tema</span>
+    <select value={theme} onChange={(event) => change(event.target.value)}>
+      <option value="system">Sistema</option><option value="light">Claro</option><option value="dark">Escuro</option>
+    </select>
+  </label>;
+}
+
+export function Access({ bootstrap, signup, invite, onSession, appearance }) {
   const [create, setCreate] = useState(Boolean(bootstrap || invite && signup));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -33,6 +42,7 @@ export function Access({ bootstrap, signup, invite, onSession }) {
       <p className="privacy"><LockKeyhole size={17} /> Comunicação criptografada</p>
     </section>
     <section className="access-panel">
+      {appearance}
       <div className="access-form">
         <h2>{create ? 'Criar conta' : 'Entrar no Chat P2P'}</h2>
         {bootstrap && create && <p className="muted">Configure a primeira conta desta instalação.</p>}

@@ -1,15 +1,17 @@
 import { createIdentity, descriptionStatement, sign, verify } from '../shared/crypto.mjs';
 import { makeRoomChatKey, roomChatCipher } from '../shared/room-chat.mjs';
+import { readPreference, writePreference } from './local.mjs';
 
 const mediaOrder = ['mic','camera','screen'];
-const profiles = {
+export const videoProfiles = {
   480: { width: 854, height: 480, bitrate: 850_000 },
   720: { width: 1280, height: 720, bitrate: 1_800_000 },
   1080: { width: 1920, height: 1080, bitrate: 4_000_000 },
+  1440: { width: 2560, height: 1440, bitrate: 6_000_000 },
 };
 
 function displayProfile(value) {
-  const { width, height } = profiles[value];
+  const { width, height } = videoProfiles[value];
   return { width: { ideal: width }, height: { ideal: height }, frameRate: { ideal: 30, max: 30 } };
 }
 
@@ -158,7 +160,7 @@ class Peer {
       if (track?.kind !== 'video') return;
       const parameters = sender.getParameters();
       if (!parameters.encodings.length) return;
-      parameters.encodings[0].maxBitrate = profiles[this.room.quality].bitrate;
+      parameters.encodings[0].maxBitrate = videoProfiles[this.room.quality].bitrate;
       await sender.setParameters(parameters).catch(() => {});
     }));
     this.announce();
@@ -240,7 +242,8 @@ export class RoomConnection {
     this.messages = [];
     this.chatCounter = 0;
     this.receivedChat = new Map();
-    this.quality = 720;
+    const savedQuality = Number(readPreference('video-quality', '720'));
+    this.quality = Object.hasOwn(videoProfiles, savedQuality) ? savedQuality : 720;
     this.incoming = Promise.resolve();
     this.unverified = [];
     this.retries = 0;
@@ -409,8 +412,10 @@ export class RoomConnection {
   }
 
   async setQuality(quality) {
-    if (!Object.hasOwn(profiles, quality)) return;
+    if (!Object.hasOwn(videoProfiles, quality)) return;
     this.quality = quality;
+    writePreference('video-quality', String(quality));
+    this.render();
     for (const kind of ['camera','screen']) {
       await this.local[kind].track?.applyConstraints(displayProfile(quality)).catch(() => {});
     }
