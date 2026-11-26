@@ -56,7 +56,7 @@ function RoomPeople({ state, session, connection, report }) {
   </div>;
 }
 
-const initial = { people: [], messages: [], status: 'Conectando', policy: {}, quality: 720 };
+const initial = { people: [], messages: [], status: 'Conectando', media: 'Conectando', policy: {}, quality: 720 };
 export function Meeting({ room, group, session, verified, leave, report, createLive }) {
   const runtime = useRef(null);
   const roster = useRef(verified);
@@ -64,6 +64,7 @@ export function Meeting({ room, group, session, verified, leave, report, createL
   const [state, setState] = useState(initial);
   const [tab, setTab] = useState('chat');
   const [capturing, setCapturing] = useState(false);
+  const [sending, setSending] = useState(false);
   const isLive = room.mode === 'live';
   useEffect(() => {
     const connection = new RoomConnection(room, group, session, roster.current, setState, report);
@@ -94,10 +95,8 @@ export function Meeting({ room, group, session, verified, leave, report, createL
       <div className="stage">
         <div className="stage-status">
           {state.publisher && <span className="live-indicator"><Radio size={16} /> Ao vivo</span>}
-          <span className="connection-indicator"><AudioLines size={16} /> {connected ? state.path ?? state.status : state.status}</span>
+          <span className="connection-indicator"><AudioLines size={16} /> {state.media}</span>
         </div>
-        {group.chat_mode === 'contact' && connected && people === 1 &&
-          <p className="call-waiting" role="status">Aguardando a outra pessoa entrar</p>}
         {presentations.length > 0 ? <>
           <div className="screens">{presentations.map((person) => <div className="screen" key={person.id}>
             <Media stream={person.media.screen} muted label={'Tela de ' + person.name} />
@@ -112,6 +111,10 @@ export function Meeting({ room, group, session, verified, leave, report, createL
             {isLive && connected && <small>{people} {people === 1 ? 'pessoa na sala' : 'pessoas na sala'}</small>}
           </div>}
       </div>
+      {state.mediaFailed && <p className="muted" role="status">
+        {state.hasTurn ? 'A conexão de mídia falhou.' : 'A conexão direta falhou e o servidor não tem TURN configurado.'}
+        {state.canChat && ' O chat segue disponível.'}
+      </p>}
       <div className="meeting-controls" aria-label="Controles de mídia">
         <button aria-pressed={Boolean(self?.media.mic)} disabled={!canCapture || state.policy.muted} onClick={() => toggle('mic')}>
           {self?.media.mic ? <Mic size={19} /> : <MicOff size={19} />} Microfone</button>
@@ -137,11 +140,13 @@ export function Meeting({ room, group, session, verified, leave, report, createL
         <button aria-pressed={tab === 'chat'} onClick={() => setTab('chat')}>Chat da sala</button>
         <button aria-pressed={tab === 'people'} onClick={() => setTab('people')}>Pessoas <span>{people}</span></button>
       </div>
-      {tab === 'chat' ? <Conversation messages={state.messages} roster={state.people} label="Chat da sala" available={connected && people > 1}
+      {tab === 'chat' ? <Conversation messages={state.messages} roster={state.people} label="Chat da sala" busy={sending} available={state.canChat}
         empty="As mensagens da sala ficam disponíveis durante esta sessão."
-        onSend={(text) => {
-          try { runtime.current.chat(text); return true; }
+        onSend={async (text) => {
+          setSending(true);
+          try { await runtime.current.chat(text); return true; }
           catch (error) { report(error); return false; }
+          finally { setSending(false); }
         }} /> : <RoomPeople state={state} session={session} connection={runtime.current} report={report} />}
     </aside>
   </div>;

@@ -1,4 +1,5 @@
 import { createIdentity, descriptionStatement, sign, verify } from '../shared/crypto.mjs';
+import { makeRoomChatKey, roomChatCipher } from '../shared/room-chat.mjs';
 
 const mediaOrder = ['mic','camera','screen'];
 const profiles = {
@@ -22,11 +23,19 @@ class Peer {
     this.member = member;
     this.remoteCounter = 0;
     this.counter = 0;
+    this.sender = member.id + '/' + member.instance;
     this.candidates = [];
     this.tracks = initialMedia();
     this.announced = {};
     this.initiator = room.instance.localeCompare(member.instance) < 0;
     this.pc = new RTCPeerConnection(room.configuration);
+    this.chatReady = roomChatCipher(room.id, room.self, room.chatIdentity, member)
+      .then((cipher) => {
+        this.chatCipher = cipher;
+        this.room.render();
+        return cipher;
+      }).catch(() => null);
+    this.watchMedia();
     this.pc.onicecandidate = ({ candidate }) => {
       if (candidate) this.send({ type: 'ice', candidate: candidate.toJSON() });
     };
@@ -40,10 +49,13 @@ class Peer {
       if (!this.initiator && channel.label === 'room') this.bindChannel(channel);
     };
     this.pc.onconnectionstatechange = () => {
-      if (this.initiator && this.pc.connectionState === 'failed' && this.pc.signalingState === 'stable' &&
-          this.room.isOnline() && (this.retryAt ?? 0) < Date.now()) {
-        this.retryAt = Date.now() + 5000;
-        this.offer(true).catch((error) => this.room.report(error));
+      if (this.pc.connectionState === 'connected') {
+        clearTimeout(this.mediaTimer);
+        this.mediaTimer = null;
+        this.mediaDelayed = false;
+        this.mediaRetried = false;
+      } else if (this.pc.connectionState === 'disconnected' || this.pc.connectionState === 'failed') {
+        this.watchMedia();
       }
       this.room.render();
     };
@@ -54,8 +66,47 @@ class Peer {
     }
   }
 
+  watchMedia() {
+    if (this.mediaTimer) return;
+    this.mediaTimer = setTimeout(() => {
+      this.mediaTimer = null;
+      if (this.pc.connectionState === 'connected' || this.pc.connectionState === 'closed') return;
+      const retry = this.initiator && this.pc.signalingState === 'stable' && this.room.isOnline() && !this.mediaRetried;
+      this.mediaDelayed = !retry;
+      if (retry) {
+        this.mediaRetried = true;
+        this.offer(true).catch((error) => this.room.report(error));
+        this.watchMedia();
+      }
+      this.room.render();
+    }, 10_000);
+  }
+
   send(signal) {
-    this.room.send({ ...signal, to: this.member.id, toInstance: this.member.instance });
+    return this.room.send({ ...signal, to: this.member.id, toInstance: this.member.instance });
+  }
+
+  get canChat() {
+    return this.channel?.readyState === 'open' || (this.room.isOnline() && !!this.chatCipher);
+  }
+
+  async sendChat(text) {
+    if (this.data({ kind: 'chat', text })) return true;
+    if (!this.room.isOnline() || !this.chatCipher) return false;
+    const envelope = await this.chatCipher.encrypt(++this.room.chatCounter, text);
+    return this.send({ type: 'chat', ...envelope });
+  }
+
+  async readChat(event) {
+    if (!Number.isSafeInteger(event.counter) || event.counter <= (this.room.receivedChat.get(this.sender) ?? 0)) return;
+    const cipher = await this.chatReady;
+    if (!cipher) return;
+    try {
+      const text = await cipher.decrypt(event);
+      if (!text.trim() || text.length > 1500) return;
+      this.room.receivedChat.set(this.sender, event.counter);
+      this.room.message(this.member.id, text);
+    } catch {}
   }
 
   bindChannel(channel) {
@@ -75,22 +126,28 @@ class Peer {
       try { event = JSON.parse(data); } catch { return; }
       if (event?.kind === 'chat' && typeof event.text === 'string' && event.text.trim() && event.text.length <= 1500)
         this.room.message(this.member.id, event.text);
-      if (event?.kind === 'media') {
-        this.announced = Object.fromEntries(mediaOrder.map((kind) => [kind, event[kind] === true]));
-        this.room.render();
-      }
+      if (event?.kind === 'media') this.setAnnouncement(event);
     };
   }
 
   data(payload) {
     if (this.channel?.readyState !== 'open' || this.channel.bufferedAmount > 65536) return false;
-    this.channel.send(JSON.stringify(payload));
-    return true;
+    try {
+      this.channel.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  setAnnouncement(event) {
+    this.announced = Object.fromEntries(mediaOrder.map((kind) => [kind, event[kind] === true]));
+    this.room.render();
   }
 
   announce() {
     const media = Object.fromEntries(mediaOrder.map((kind) => [kind, Boolean(this.room.sendTrack(kind))]));
-    this.data({ kind: 'media', ...media });
+    if (!this.member.chatKey || !this.send({ type: 'media', ...media })) this.data({ kind: 'media', ...media });
   }
 
   async setTracks() {
@@ -120,6 +177,9 @@ class Peer {
     if (this.offering || this.pc.signalingState !== 'stable') return;
     this.offering = true;
     try {
+      if (iceRestart && this.room.hasTurn) {
+        this.pc.setConfiguration({ ...this.room.configuration, iceTransportPolicy: 'relay' });
+      }
       await this.setTracks();
       await this.pc.setLocalDescription(await this.pc.createOffer({ iceRestart }));
       await this.localDescription();
@@ -129,7 +189,9 @@ class Peer {
   }
 
   async ice(candidate) {
-    if (!this.pc.remoteDescription) {
+    const remote = this.pc.remoteDescription;
+    if (!remote || (candidate.usernameFragment &&
+        !remote.sdp.split(/\r?\n/).includes('a=ice-ufrag:' + candidate.usernameFragment))) {
       if (this.candidates.length < 100) this.candidates.push(candidate);
       return;
     }
@@ -157,6 +219,7 @@ class Peer {
   }
 
   close() {
+    clearTimeout(this.mediaTimer);
     this.channel?.close();
     this.pc.close();
   }
@@ -175,6 +238,8 @@ export class RoomConnection {
     this.peers = new Map();
     this.local = initialMedia();
     this.messages = [];
+    this.chatCounter = 0;
+    this.receivedChat = new Map();
     this.quality = 720;
     this.incoming = Promise.resolve();
     this.unverified = [];
@@ -183,8 +248,11 @@ export class RoomConnection {
   }
 
   async connect(ice) {
-    this.device ??= await createIdentity();
     if (this.closed) return;
+    this.device ??= await createIdentity();
+    this.chatIdentity ??= await makeRoomChatKey(this.id, this.self, this.device.privateKey);
+    if (this.closed) return;
+    this.hasTurn = ice.iceServers.some(({ urls }) => [urls].flat().some((url) => /^turns?:/.test(url)));
     this.configuration = {
       iceServers: ice.iceServers,
       iceTransportPolicy: ice.forceRelay ? 'relay' : 'all',
@@ -192,7 +260,10 @@ export class RoomConnection {
     this.ice = ice;
     const url = new URL('/signal', location.origin);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.search = new URLSearchParams({ room: this.id, instance: this.instance, signing: this.device.signing }).toString();
+    const { chatKey, chatProof } = this.chatIdentity;
+    url.search = new URLSearchParams({
+      room: this.id, instance: this.instance, signing: this.device.signing, chatKey, chatProof,
+    }).toString();
     this.socket = new WebSocket(url);
     this.socket.onmessage = ({ data }) => {
       this.incoming = this.incoming.then(() => this.receive(JSON.parse(data))).catch((error) => this.report(error));
@@ -207,7 +278,7 @@ export class RoomConnection {
       this.status = 'Reconectando';
       this.render();
       if (!this.expiry) this.expiry = setTimeout(() => this.close(), 15_000);
-      this.reconnect = setTimeout(() => { void this.connect(ice); }, Math.min(3000, 500 * ++this.retries));
+      this.reconnect = setTimeout(() => { this.connect(ice).catch((error) => this.report(error)); }, Math.min(3000, 500 * ++this.retries));
     };
     if (!this.metrics) this.metrics = setInterval(() => this.reportStats().catch(() => {}), 4000);
     this.render();
@@ -242,7 +313,7 @@ export class RoomConnection {
     const admitted = new Map(this.map.filter((item) => this.trustedMember(item)).map((item) => [item.id, item]));
     for (const [id, peer] of this.peers) {
       const member = admitted.get(id);
-      if (!member || member.instance !== peer.member.instance || member.signing !== peer.member.signing) {
+      if (!member || member.instance !== peer.member.instance || member.signing !== peer.member.signing || member.chatKey !== peer.member.chatKey) {
         peer.close();
         this.peers.delete(id);
       }
@@ -280,13 +351,15 @@ export class RoomConnection {
       return;
     }
     const peer = this.peers.get(event.from);
-    if (!peer && this.roster && this.unverified.length < 100 && ['ice','sdp'].includes(event.type) &&
+    if (!peer && this.roster && this.unverified.length < 100 && ['ice','sdp','chat','media'].includes(event.type) &&
         this.map.some(({ id, instance }) => event.from === id && event.fromInstance === instance)) {
       this.unverified.push(event);
       return;
     }
     if (!peer || peer.member.instance !== event.fromInstance) return;
     if (event.type === 'ice') await peer.ice(event.candidate);
+    if (event.type === 'chat') await peer.readChat(event);
+    if (event.type === 'media') peer.setAnnouncement(event);
     if (event.type === 'sdp') await peer.description(event, peer.member.signing);
   }
 
@@ -351,9 +424,10 @@ export class RoomConnection {
     this.render();
   }
 
-  chat(text) {
+  async chat(text) {
     const peers = [...this.peers.values()];
-    const sent = peers.filter((peer) => peer.data({ kind: 'chat', text })).length;
+    const deliveries = await Promise.allSettled(peers.map((peer) => peer.sendChat(text)));
+    const sent = deliveries.filter((result) => result.status === 'fulfilled' && result.value).length;
     if (!sent) throw Error('Aguarde a conexão com outro participante para enviar.');
     this.message(this.self.id, text);
     if (sent < peers.length) this.report(Error('Alguns participantes ainda não estavam conectados para receber a mensagem.'));
@@ -394,13 +468,24 @@ export class RoomConnection {
       const allowed = this.mode === 'meet' || this.state?.publisher === account.id;
       const media = Object.fromEntries(mediaOrder.map((kind) => {
         const isBlocked = kind === 'mic' ? policy.muted : policy.videoBlocked;
-        const stream = allowed && !isBlocked && (self ? this.local[kind].stream : peer?.announced[kind] && peer.tracks[kind].stream);
+        const stream = allowed && !isBlocked && (self ? this.local[kind].stream : peer?.pc.connectionState === 'connected' && peer.announced[kind] && peer.tracks[kind].stream);
         return [kind, stream || null];
       }));
       return [{ ...policy, name: account.name, self, media }];
     });
+    const peers = [...this.peers.values()];
+    const mediaReady = peers.filter((peer) => peer.pc.connectionState === 'connected').length;
+    const mediaFailed = peers.some((peer) => peer.mediaDelayed || peer.pc.connectionState === 'failed');
+    let media = this.status;
+    if (this.status === 'Conectado') {
+      if (!peers.length) media = 'Aguardando participante';
+      else if (mediaReady === peers.length) media = this.path ?? 'Mídia conectada';
+      else if (mediaFailed) media = mediaReady ? 'Mídia conectada parcialmente' : 'Mídia indisponível';
+      else media = 'Conectando mídia';
+    }
     this.onState({ people, host: this.state?.host, term: this.state?.term, publisher: this.state?.publisher,
-      status: this.status, path: this.path, canPublish: this.canPublish, policy: this.personalPolicy,
+      status: this.status, media, mediaFailed, hasTurn: this.hasTurn, canChat: peers.some((peer) => peer.canChat),
+      canPublish: this.canPublish, policy: this.personalPolicy,
       messages: this.messages, quality: this.quality, closed: this.closed });
   }
 

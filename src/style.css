@@ -90,7 +90,6 @@ ul { list-style: none; padding: 0; margin: 0; }
 .thumbnails .tile-avatar { width: 49px; font-size: 1.25rem; }
 .stage-empty { display: grid; justify-items: center; gap: 9px; text-align: center; color: #e2eee6; }
 .stage-empty small { color: #c5d7cc; }
-.call-waiting { position: absolute; inset: 16px auto auto 16px; font-size: .86rem; }
 .meeting-controls { display: flex; flex-wrap: wrap; gap: 7px; }
 .meeting-controls button { padding-inline: 10px; min-height: 43px; color: #123d2e; border-color: #739d8c; font-size: .93rem; }
 .meeting-controls button[aria-pressed=true] { background: #cce7da; border-color: #33795e; }
@@ -180,7 +179,6 @@ ul { list-style: none; padding: 0; margin: 0; }
   .header-actions { flex-wrap: wrap; }
   .friend-form { grid-template-columns: minmax(0, 1fr); }
   .friend-actions { grid-column: 2 / -1; justify-content: start; }
-  .call-waiting { position: static; text-align: center; }
 
   .meeting-controls button { flex: 1 1 auto; }
 }

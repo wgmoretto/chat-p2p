@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createIdentity, descriptionStatement, eventStatement, sign, verify } from '../shared/crypto.mjs';
+import { makeRoomChatKey, roomChatCipher } from '../shared/room-chat.mjs';
 import { createApplication } from '../server/index.mjs';
 import { selectHost } from '../server/rooms.mjs';
 import { openDatabase } from '../server/storage.mjs';
@@ -29,6 +30,24 @@ test('sinalização assinada rejeita troca de SDP, destinatário e sessão', asy
   assert.equal(await verify(a.signing, proof, descriptionStatement(room, a, b, 1, { ...offer, sdp: 'a=fingerprint:sha-256 44:55' })), false);
   assert.equal(await verify(a.signing, proof, descriptionStatement(room, a, { ...b, instance: randomUUID() }, 1, offer)), false);
   assert.equal(await verify(b.signing, proof, payload), false);
+});
+
+test('chat pelo servidor cifra o texto e vincula mensagem, remetente e destinatário à sessão', async () => {
+  const room = randomUUID();
+  const a = { ...await person('Alice', 'owner'), instance: randomUUID() };
+  const b = { ...await person('Bob', 'member'), instance: randomUUID() };
+  const keyA = await makeRoomChatKey(room, a, a.privateKey);
+  const keyB = await makeRoomChatKey(room, b, b.privateKey);
+  const alice = await roomChatCipher(room, a, keyA, { ...b, ...keyB });
+  const bob = await roomChatCipher(room, b, keyB, { ...a, ...keyA });
+  const text = 'mensagem apenas entre as pontas';
+  const encrypted = await alice.encrypt(1, text);
+  assert.equal(JSON.stringify(encrypted).includes(text), false);
+  assert.equal(await bob.decrypt(encrypted), text);
+  await assert.rejects(() => bob.decrypt({ ...encrypted, counter: 2 }));
+  await assert.rejects(() => alice.decrypt(encrypted));
+  assert.equal(await roomChatCipher(room, b, keyB, { ...a, ...keyA, instance: randomUUID() }), null);
+  assert.equal(await roomChatCipher(randomUUID(), b, keyB, { ...a, ...keyA }), null);
 });
 
 test('MLS entrega a um membro e revoga leitura mesmo com o commit e o ciphertext', async () => {

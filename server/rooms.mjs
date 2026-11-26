@@ -29,8 +29,8 @@ export function attachRooms(server, db, config) {
   function publish(room) {
     const message = { type: 'room', room: room.id, host: room.host, term: room.term,
       publisher: room.publisher,
-      peers: [...room.peers.values()].map(({ id, instance, role, name, signing }) => ({
-        id, instance, role, name, signing, ...room.restrictions.get(id),
+      peers: [...room.peers.values()].map(({ id, instance, role, name, signing, chatKey, chatProof }) => ({
+        id, instance, role, name, signing, chatKey, chatProof, ...room.restrictions.get(id),
       })),
     };
     for (const peer of room.peers.values()) send(peer, message);
@@ -64,6 +64,14 @@ export function attachRooms(server, db, config) {
           description.sdp.length > 72_000 || !encoded(signature, 86, 86) ||
           !Number.isSafeInteger(counter) || counter < 1) return;
       send(target, { type: 'sdp', ...envelope, description: { type: description.type, sdp: description.sdp }, signature, counter });
+    } else if (message.type === 'chat') {
+      const { counter, iv, content } = message;
+      if (!peer.chatKey || !target.chatKey || !Number.isSafeInteger(counter) || counter < 1 ||
+          !encoded(iv, 16, 16) || !encoded(content, 23, 8200)) return;
+      send(target, { type: 'chat', ...envelope, counter, iv, content });
+    } else if (message.type === 'media') {
+      send(target, { type: 'media', ...envelope, mic: message.mic === true,
+        camera: message.camera === true, screen: message.screen === true });
     } else {
       const candidate = message.candidate;
       if (!candidate || typeof candidate.candidate !== 'string' || candidate.candidate.length > 3_000) return;
@@ -110,6 +118,8 @@ export function attachRooms(server, db, config) {
     switch (message.type) {
       case 'sdp':
       case 'ice':
+      case 'chat':
+      case 'media':
         relay(room, peer, message);
         break;
       case 'stats': {
@@ -160,8 +170,11 @@ export function attachRooms(server, db, config) {
     const instance = url.searchParams.get('instance');
     const account = config.authenticate(req);
     const signing = url.searchParams.get('signing') ?? account?.signing;
+    const chatKey = url.searchParams.get('chatKey');
+    const chatProof = url.searchParams.get('chatProof');
+    const chatValid = chatKey === null && chatProof === null || encoded(chatKey, 110, 140) && encoded(chatProof, 86, 86);
     if (url.pathname !== '/signal' || req.headers.origin !== config.origin || !idPattern.test(id) ||
-        !idPattern.test(instance) || !account || !encoded(signing, 110, 140)) {
+        !idPattern.test(instance) || !account || !encoded(signing, 110, 140) || !chatValid) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return;
     }
@@ -185,7 +198,8 @@ export function attachRooms(server, db, config) {
         return;
       }
       const now = Date.now();
-      const peer = { id: account.id, instance, name: account.name, signing, socket: ws, expires: account.expires, session: account.session,
+      const peer = { id: account.id, instance, name: account.name, signing, chatKey, chatProof,
+        socket: ws, expires: account.expires, session: account.session,
         role: membership.role, lastPong: now, joinedAt: now, windowStart: now, messageCount: 0 };
       room.peers.set(peer.id, peer);
       elect(room);

@@ -36,11 +36,28 @@ async function newRoom(page, name, mode) {
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
 }
 const navRoom = (page, name) => page.getByRole('navigation').getByRole('button', { name, exact: true });
+const blockedIce = process.env.TEST_ICE_BLOCKED === '1';
+const mediaPath = process.env.FORCE_TURN === '1' ? 'Relay TURN' : 'Direta';
 
 test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ browser }, testInfo) => {
   const contexts = await Promise.all(Array.from({ length: 4 }, () => browser.newContext()));
   try {
+    if (blockedIce) await Promise.all(contexts.map((context) => context.addInitScript(() => {
+      const PeerConnection = window.RTCPeerConnection;
+      window.RTCPeerConnection = class extends PeerConnection {
+        constructor(config) { super({ ...config, iceServers: [], iceTransportPolicy: 'relay' }); }
+      };
+    })));
     const [alice, bob, carol, serverBrowser] = await Promise.all(contexts.map((ctx) => ctx.newPage()));
+    const relayed = [];
+    alice.on('websocket', (socket) => {
+      if (!new URL(socket.url()).pathname.endsWith('/signal')) return;
+      socket.on('framesent', ({ payload }) => {
+        if (typeof payload !== 'string') return;
+        const frame = JSON.parse(payload);
+        if (frame.type === 'chat') relayed.push(frame);
+      });
+    });
     const faults = [];
     for (const page of [alice, bob, carol]) page.on('pageerror', (error) => faults.push(error.message));
     await serverBrowser.goto('/');
@@ -75,9 +92,18 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
 
     await alice.getByRole('button', { name: 'Conversar' }).click();
     await bob.getByRole('button', { name: 'Atender' }).click();
-    await expect(bob.getByText('Direta', { exact: true })).toBeVisible({ timeout: 18_000 });
+    if (!blockedIce) await expect(bob.getByText(mediaPath, { exact: true })).toBeVisible({ timeout: 18_000 });
     await send(alice, 'Mensagem temporária entre amigos.');
     await expect(bob.getByText('Mensagem temporária entre amigos.')).toBeVisible();
+    if (blockedIce) {
+      expect(relayed).toHaveLength(1);
+      expect(relayed[0].content).toMatch(/^[a-zA-Z0-9_-]+$/);
+      expect(JSON.stringify(relayed[0])).not.toContain('Mensagem temporária');
+      await expect(bob.getByText('Mídia indisponível', { exact: true })).toBeVisible({ timeout: 24_000 });
+      await expect(bob.getByRole('status')).toContainText('O chat segue disponível.');
+      expect(faults).toEqual([]);
+      return;
+    }
     await alice.getByRole('button', { name: 'Sair da sala' }).click();
     await bob.getByRole('button', { name: 'Sair da sala' }).click();
     await expect(alice.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
@@ -89,7 +115,7 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await invite(alice, carol, 'moderator');
     await newRoom(alice, 'Reunião semanal', 'meet');
     await navRoom(bob, 'Reunião semanal').click();
-    await expect(bob.getByText('Direta', { exact: true })).toBeVisible({ timeout: 18_000 });
+    if (!blockedIce) await expect(bob.getByText(mediaPath, { exact: true })).toBeVisible({ timeout: 18_000 });
     await send(alice, 'Bom dia! Vamos começar a reunião?');
     await expect(bob.getByText('Bom dia! Vamos começar a reunião?')).toBeVisible();
     await send(bob, 'Bom dia! Podemos começar.');
@@ -118,6 +144,14 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await bob.getByRole('button', { name: 'Parar compartilhamento' }).click();
     await expect(alice.getByLabel('Tela de Rafael')).toHaveCount(0);
     await captureSource.close();
+    const otherSource = await contexts[0].newPage();
+    await otherSource.setContent('<title>Chat P2P Capture Fixture</title><h1>Segunda apresentação de teste</h1>');
+    await alice.bringToFront();
+    await alice.getByRole('button', { name: 'Compartilhar tela', exact: true }).click();
+    await waitVideo(bob, 'Tela de Marina');
+    await alice.getByRole('button', { name: 'Parar compartilhamento' }).click();
+    await expect(bob.getByLabel('Tela de Marina')).toHaveCount(0);
+    await otherSource.close();
     await navRoom(carol, 'Reunião semanal').click();
     await waitVideo(carol, 'Câmera de Rafael');
     await carol.getByRole('button', { name: /^Pessoas/ }).click();
