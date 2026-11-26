@@ -71,7 +71,7 @@ export function attachRooms(server, db, config) {
       send(target, { type: 'chat', ...envelope, counter, iv, content });
     } else if (message.type === 'media') {
       send(target, { type: 'media', ...envelope, mic: message.mic === true,
-        camera: room.mode !== 'voice' && message.camera === true, screen: room.mode !== 'voice' && message.screen === true });
+        camera: message.camera === true, screen: message.screen === true });
     } else {
       const candidate = message.candidate;
       if (!candidate || typeof candidate.candidate !== 'string' || candidate.candidate.length > 3_000) return;
@@ -116,7 +116,6 @@ export function attachRooms(server, db, config) {
     try { message = JSON.parse(raw.toString()); } catch { return; }
     if (!message || typeof message !== 'object') return;
     if (room.filesOnly && !['sdp','ice','leave'].includes(message.type)) return;
-    if (room.mode === 'voice' && message.type === 'chat') return;
     switch (message.type) {
       case 'sdp':
       case 'ice':

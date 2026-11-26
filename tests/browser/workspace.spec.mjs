@@ -52,6 +52,16 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
         constructor(config) { super({ ...config, iceServers: [], iceTransportPolicy: 'relay' }); }
       };
     })));
+    await contexts[1].addInitScript(() => {
+      const media = navigator.mediaDevices;
+      if (!media) return;
+      const capture = media.getUserMedia.bind(media);
+      media.getUserMedia = async (options) => {
+        const stream = await capture(options);
+        if (options.audio) window.qaMicTrack = stream.getAudioTracks()[0];
+        return stream;
+      };
+    });
     const [alice, bob, carol, serverBrowser] = await Promise.all(contexts.map((ctx) => ctx.newPage()));
     const relayed = [];
     const fileSignals = [];
@@ -255,7 +265,6 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
       await expect(bob.getByText('Mídia indisponível', { exact: true })).toBeVisible({ timeout: 24_000 });
       await expect(bob.getByRole('status')).toContainText('O chat segue disponível.');
       expect(faults).toEqual([]);
-      return;
     }
     await alice.getByRole('button', { name: 'Sair da sala' }).click();
     await bob.getByRole('button', { name: 'Sair da sala' }).click();
@@ -308,10 +317,27 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     const microphone = (page) => page.getByRole('button', { name: 'Microfone', exact: true });
     const headphone = alice.getByRole('button', { name: 'Fone', exact: true });
     await expect(microphone(bob)).toHaveAttribute('aria-pressed', 'false');
-    await expect(alice.getByRole('button', { name: 'Câmera', exact: true })).toHaveCount(0);
-    await expect(alice.getByLabel('Mensagem', { exact: true })).toHaveCount(0);
+    await expect(alice.getByRole('button', { name: 'Câmera', exact: true })).toBeVisible();
+    await expect(alice.getByRole('button', { name: 'Compartilhar tela', exact: true })).toBeVisible();
+    await send(alice, 'Texto na chamada de voz.');
+    await expect(bob.getByRole('log').getByText('Texto na chamada de voz.')).toBeVisible();
+    if (!blockedIce) {
+      const voiceCamera = alice.getByRole('button', { name: 'Câmera', exact: true });
+      await voiceCamera.click();
+      await waitVideo(bob, 'Câmera de Marina');
+      await voiceCamera.click();
+      await expect(bob.getByLabel('Câmera de Marina', { exact: true })).toHaveCount(0);
+    }
     await microphone(bob).click();
     await expect(microphone(bob)).toHaveAttribute('aria-pressed', 'true');
+    const noise = bob.getByRole('button', { name: 'Redução de ruído' });
+    await expect(noise).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => bob.evaluate(() => window.qaMicTrack?.getConstraints().noiseSuppression)).toBe(true);
+    await noise.click();
+    await expect(noise).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => bob.evaluate(() => window.qaMicTrack?.getConstraints().noiseSuppression)).toBe(false);
+    await expect(microphone(bob)).toHaveAttribute('aria-pressed', 'true');
+    await alice.getByRole('button', { name: /^Pessoas/ }).click();
     const volume = alice.getByRole('slider', { name: 'Volume de Rafael' });
     await expect(volume).toHaveValue('100');
     await volume.press('Home');
@@ -331,6 +357,7 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
       await expect(audio(alice)).toHaveJSProperty('muted', false);
       await expect(audio(alice)).toHaveJSProperty('volume', 0.05);
     }
+    await alice.getByRole('button', { name: 'Chat da sala' }).click();
     await alice.screenshot({ path: testInfo.outputPath('sala-voz-desktop.png') });
     await alice.getByLabel('Tema').selectOption('dark');
     await alice.setViewportSize({ width: 390, height: 844 });
@@ -344,10 +371,12 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await expect(alice.locator('audio')).toHaveCount(0);
     await alice.getByRole('button', { name: 'Sair da sala' }).click();
     await navRoom(alice, 'Conversas').click();
+    await alice.getByRole('button', { name: /^Pessoas/ }).click();
     await expect(alice.getByRole('slider', { name: 'Volume de Rafael' })).toHaveValue('5');
     await alice.getByRole('button', { name: 'Sair da sala' }).click();
     await bob.getByRole('button', { name: 'Sair da sala' }).click();
-    if (!blockedIce) await carol.getByRole('button', { name: 'Sair da sala' }).click();
+    if (blockedIce) { expect(faults).toEqual([]); return; }
+    await carol.getByRole('button', { name: 'Sair da sala' }).click();
 
     await newRoom(alice, 'Reunião semanal', 'meet');
     await alice.getByRole('button', { name: 'Sair da sala' }).click();
@@ -415,24 +444,30 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await expect(expand).toBeFocused();
     await alice.getByRole('button', { name: 'Ocultar painel' }).click();
     await expect(alice.getByRole('button', { name: 'Chat da sala' })).toBeHidden();
-    await alice.getByRole('button', { name: 'Mostrar painel' }).click();
+    await alice.getByRole('button', { name: 'Chat e pessoas' }).click();
     await expect(alice.getByRole('button', { name: 'Chat da sala' })).toBeVisible();
     await bob.getByLabel('Qualidade de envio').selectOption('1440');
     await expect(bob.getByLabel('Qualidade de envio')).toHaveValue('1440');
     await expect(bob.getByLabel('Qualidade de envio')).toBeEnabled();
     await waitVideo(alice, 'Tela de Rafael');
-    await bob.getByRole('button', { name: 'Parar compartilhamento' }).click();
-    await expect(alice.getByLabel('Tela de Rafael', { exact: true })).toHaveCount(0);
-    await captureSource.close();
+    await captureSource.evaluate(() => { document.title = 'Apresentação de Rafael'; });
     const otherSource = await contexts[0].newPage();
     await otherSource.setContent('<title>Chat P2P Capture Fixture</title><h1>Segunda apresentação de teste</h1>');
     await alice.bringToFront();
     await alice.getByRole('button', { name: 'Compartilhar tela', exact: true }).click();
     await waitVideo(bob, 'Tela de Marina');
+    await navRoom(carol, 'Reunião da equipe').click();
+    await waitVideo(carol, 'Tela de Marina');
+    await waitVideo(carol, 'Tela de Rafael');
+    await expect(carol.getByRole('group', { name: 'Telas compartilhadas' }).locator('video')).toHaveCount(2);
+    await carol.screenshot({ path: testInfo.outputPath('duas-telas-desktop.png') });
+    await bob.getByRole('button', { name: 'Parar compartilhamento' }).click();
+    await expect(carol.getByLabel('Tela de Rafael', { exact: true })).toHaveCount(0);
+    await waitVideo(carol, 'Tela de Marina');
+    await captureSource.close();
     await alice.getByRole('button', { name: 'Parar compartilhamento' }).click();
     await expect(bob.getByLabel('Tela de Marina', { exact: true })).toHaveCount(0);
     await otherSource.close();
-    await navRoom(carol, 'Reunião da equipe').click();
     await waitVideo(carol, 'Câmera de Rafael');
     await carol.getByRole('button', { name: /^Pessoas/ }).click();
     await expect(carol.getByText('Host da sessão')).toBeVisible();

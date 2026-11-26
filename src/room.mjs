@@ -3,6 +3,7 @@ import { makeRoomChatKey, roomChatCipher } from '../shared/room-chat.mjs';
 import { readPreference, writePreference } from './local.mjs';
 
 const mediaOrder = ['mic','camera','screen'];
+const microphoneConstraints = (noiseSuppression) => ({ noiseSuppression, echoCancellation: true, autoGainControl: true });
 export const videoProfiles = {
   480: { width: 854, height: 480, bitrate: 850_000 },
   720: { width: 1280, height: 720, bitrate: 1_800_000 },
@@ -239,10 +240,10 @@ export class RoomConnection {
     this.id = room.id;
     this.mode = room.mode;
     this.filesOnly = room.mode === 'files';
-    this.hasChat = !this.filesOnly && room.mode !== 'voice';
+    this.hasChat = !this.filesOnly;
     this.channelName = this.filesOnly ? 'files-v1' : this.hasChat ? 'room' : null;
     this.signalScope = this.filesOnly ? 'files:' + room.id : room.id;
-    this.mediaKinds = this.filesOnly ? [] : room.mode === 'voice' ? ['mic'] : mediaOrder;
+    this.mediaKinds = this.filesOnly ? [] : mediaOrder;
     this.onFileChannel = onFileChannel;
     this.device = group.chat_mode === 'mls' ? session.identity : null;
     this.roster = roster;
@@ -257,6 +258,7 @@ export class RoomConnection {
     this.receivedChat = new Map();
     const savedQuality = Number(readPreference('video-quality', '720'));
     this.quality = Object.hasOwn(videoProfiles, savedQuality) ? savedQuality : 720;
+    this.noiseSuppression = readPreference('noise-suppression', 'on') === 'on';
     this.incoming = Promise.resolve();
     this.unverified = [];
     this.retries = 0;
@@ -397,7 +399,7 @@ export class RoomConnection {
       if (!navigator.mediaDevices) throw Error('A captura exige HTTPS ou localhost.');
       const stream = kind === 'screen'
         ? await navigator.mediaDevices.getDisplayMedia({ video: displayProfile(this.quality), audio: false })
-        : await navigator.mediaDevices.getUserMedia(kind === 'mic' ? { audio: true } : { video: displayProfile(this.quality) });
+        : await navigator.mediaDevices.getUserMedia(kind === 'mic' ? { audio: microphoneConstraints(this.noiseSuppression) } : { video: displayProfile(this.quality) });
       const track = stream.getTracks()[0];
       const blocked = kind === 'mic' ? this.personalPolicy.muted : this.personalPolicy.videoBlocked;
       if (this.closed || !this.canPublish || blocked) { track.stop(); return; }
@@ -425,6 +427,13 @@ export class RoomConnection {
       this.render();
     });
     await this.refreshing;
+  }
+
+  async setNoiseSuppression(enabled) {
+    await this.local.mic.track?.applyConstraints(microphoneConstraints(enabled));
+    this.noiseSuppression = enabled;
+    writePreference('noise-suppression', enabled ? 'on' : 'off');
+    this.render();
   }
 
   async setQuality(quality) {
@@ -511,7 +520,7 @@ export class RoomConnection {
     this.onState({ people, host: this.state?.host, term: this.state?.term, publisher: this.state?.publisher,
       status: this.status, media, mediaFailed, hasTurn: this.hasTurn, canChat: peers.some((peer) => peer.canChat),
       canPublish: this.canPublish, policy: this.personalPolicy,
-      messages: this.messages, quality: this.quality, closed: this.closed });
+      messages: this.messages, quality: this.quality, noiseSuppression: this.noiseSuppression, closed: this.closed });
   }
 
   close() {

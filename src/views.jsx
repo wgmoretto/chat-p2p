@@ -5,7 +5,7 @@ import { login, register } from './workspace.mjs';
 export const roomTypes = {
   text: { label: 'Chat de texto', icon: Hash },
   voice: { label: 'Chat de voz', icon: Volume2 },
-  meet: { label: 'Reunião', icon: Video },
+  meet: { label: 'Chamada de vídeo', icon: Video },
   live: { label: 'Live', icon: Radio },
 };
 

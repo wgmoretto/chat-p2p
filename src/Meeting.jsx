@@ -85,12 +85,11 @@ function Tile({ person, host }) {
   return <div className="tile">
     {camera ? <VisualStream stream={camera} label={'Câmera de ' + person.name} />
       : <span aria-hidden="true" className="tile-avatar">{initials(person.name)}</span>}
-    {!person.self && person.media.mic && <Media audio stream={person.media.mic} label={'Áudio de ' + person.name} />}
     <span className="tile-label">{person.name}{person.self ? ' (você)' : ''}{host && <Crown size={14} aria-label="Host" />}</span>
   </div>;
 }
 
-function RoomPeople({ state, session, connection, report, listen, setVolume, volumeFor }) {
+function RoomPeople({ state, session, connection, report, setVolume, volumeFor }) {
   const self = state.people.find(({ self }) => self);
   const role = self?.role ?? 'member';
   const action = (type, person) => {
@@ -103,11 +102,9 @@ function RoomPeople({ state, session, connection, report, listen, setVolume, vol
       <span className="avatar" aria-hidden="true">{initials(person.name)}</span>
       <span className="person-label"><strong>{person.name}</strong>
         <small>{person.id === state.host ? 'Host da sessão' : person.role === 'moderator' ? 'Moderador' : 'Participante'}
-          {person.self ? ' · Você' : ''}{person.muted ? ' · Silenciado' : setVolume ? person.media.mic ? ' · Microfone ligado' : ' · Microfone desligado' : ''}
-          {!setVolume && person.videoBlocked ? ' · Vídeo bloqueado' : ''}</small></span>
-      {setVolume && !person.self && <div className="person-volume">
-        {person.media.mic && <Media audio stream={person.media.mic} label={'Áudio de ' + person.name}
-          muted={!listen} volume={volumeFor(person.id) / 100} />}
+          {person.self ? ' · Você' : ''}{person.muted ? ' · Silenciado' : person.media.mic ? ' · Microfone ligado' : ' · Microfone desligado'}
+          {person.videoBlocked ? ' · Vídeo bloqueado' : ''}</small></span>
+      {!person.self && <div className="person-volume">
         <label><Volume2 size={16} aria-hidden="true" />
           <input type="range" min="0" max="100" step="5" value={volumeFor(person.id)}
             aria-label={'Volume de ' + person.name} aria-valuetext={volumeFor(person.id) + '%'}
@@ -121,7 +118,7 @@ function RoomPeople({ state, session, connection, report, listen, setVolume, vol
           {state.host === session.account.id && <option value="host.transfer">Transferir host</option>}
           {(role === 'owner' || role === 'moderator' && person.role === 'member') && <>
             <option value={person.muted ? 'unmute' : 'mute'}>{person.muted ? 'Liberar microfone' : 'Silenciar'}</option>
-            {!setVolume && <option value={person.videoBlocked ? 'allowVideo' : 'blockVideo'}>{person.videoBlocked ? 'Liberar vídeo' : 'Bloquear vídeo'}</option>}
+            <option value={person.videoBlocked ? 'allowVideo' : 'blockVideo'}>{person.videoBlocked ? 'Liberar vídeo' : 'Bloquear vídeo'}</option>
             <option value="kick">Remover da sessão</option>
           </>}
         </select>}
@@ -140,10 +137,15 @@ export function Meeting({ room, group, session, verified, leave, report, createL
   const [sending, setSending] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [changingQuality, setChangingQuality] = useState(false);
+  const [changingNoise, setChangingNoise] = useState(false);
+  const panel = useRef(null);
+  const panelButton = useRef(null);
   const [listen, setListen] = useState(true);
   const [volumes, setVolumes] = useState({});
   const isLive = room.mode === 'live';
   const isVoice = room.mode === 'voice';
+  const noiseSupported = navigator.mediaDevices?.getSupportedConstraints?.().noiseSuppression;
+  const noiseEnabled = state.noiseSuppression ?? (readPreference('noise-suppression', 'on') === 'on');
   useEffect(() => {
     const connection = new RoomConnection(room, group, session, roster.current, setState, report);
     runtime.current = connection;
@@ -156,7 +158,8 @@ export function Meeting({ room, group, session, verified, leave, report, createL
   const presentations = state.people.filter((person) => person.media.screen);
   const onStage = isLive && state.publisher ? state.people.filter(({ id }) => id === state.publisher) : state.people;
   const people = state.people.length;
-  const canCapture = self && state.canPublish && !capturing && !changingQuality && !state.closed;
+  const audioStage = isVoice && !presentations.length && !onStage.some(({ media }) => media.camera);
+  const canCapture = self && state.canPublish && !capturing && !changingQuality && !changingNoise && !state.closed;
   const connected = state.status === 'Conectado';
 
   async function toggle(kind) {
@@ -175,46 +178,63 @@ export function Meeting({ room, group, session, verified, leave, report, createL
     finally { setChangingQuality(false); }
   }
 
-  const microphone = <button aria-pressed={Boolean(self?.media.mic)} disabled={!canCapture || state.policy.muted} onClick={() => toggle('mic')}>
-    {self?.media.mic ? <Mic size={19} /> : <MicOff size={19} />} Microfone</button>;
-
-  if (isVoice) {
-    const volumeKey = (id) => 'voice-volume/' + session.account.id + '/' + id;
-    const volumeFor = (id) => {
-      const value = volumes[id] ?? Number(readPreference(volumeKey(id), '100'));
-      return Number.isFinite(value) && value >= 0 && value <= 100 ? value : 100;
-    };
-    return <section className="voice-room" aria-label="Sala de voz">
-      <div className="voice-summary">
-        <span className="room-symbol"><Volume2 size={22} aria-hidden="true" /></span>
-        <div><strong>Áudio da sala</strong><p role="status">{state.media}</p></div>
-      </div>
-      {state.mediaFailed && <p className="media-notice" role="status">
-        {state.hasTurn ? 'A conexão de voz falhou.' : 'A conexão direta falhou e o servidor não tem TURN configurado.'}
-      </p>}
-      <RoomPeople state={state} session={session} connection={runtime.current} report={report} listen={listen}
-        volumeFor={volumeFor} setVolume={(id, volume) => {
-          setVolumes((current) => ({ ...current, [id]: volume }));
-          writePreference(volumeKey(id), String(volume));
-        }} />
-      <div className="meeting-controls" aria-label="Controles de áudio">
-        {microphone}
-        <button aria-pressed={listen} title={listen ? 'Silenciar áudio recebido' : 'Ativar áudio recebido'}
-          onClick={() => setListen(!listen)}>{listen ? <Headphones size={19} /> : <HeadphoneOff size={19} />} Fone</button>
-        <button className="danger" onClick={leave}><PhoneOff size={19} /> Sair da sala</button>
-      </div>
-    </section>;
+  async function toggleNoise() {
+    setChangingNoise(true);
+    try { await runtime.current.setNoiseSuppression(!noiseEnabled); }
+    catch { report(Error('Não foi possível alterar a redução de ruído neste microfone.')); }
+    finally { setChangingNoise(false); }
   }
 
+  const volumeKey = (id) => 'voice-volume/' + session.account.id + '/' + id;
+  const volumeFor = (id) => {
+    const value = volumes[id] ?? Number(readPreference(volumeKey(id), '100'));
+    return Number.isFinite(value) && value >= 0 && value <= 100 ? value : 100;
+  };
+
   return <div className={'meeting' + (panelOpen ? '' : ' panel-hidden')}>
-    <section className="meeting-center" aria-label="Vídeo da sala">
-      <div className={'stage' + (presentations.length ? ' stage-presenting' : '')}>
+    {state.people.filter((person) => !person.self && person.media.mic).map((person) =>
+      <Media key={person.id} audio stream={person.media.mic} label={'Áudio de ' + person.name}
+        muted={!listen} volume={volumeFor(person.id) / 100} />)}
+    <div className="meeting-controls" aria-label="Controles da chamada">
+      <button aria-pressed={Boolean(self?.media.mic)} disabled={!canCapture || state.policy.muted} onClick={() => toggle('mic')}>
+        {self?.media.mic ? <Mic size={19} /> : <MicOff size={19} />} Microfone</button>
+      <button aria-pressed={listen} title={listen ? 'Silenciar áudio recebido' : 'Ativar áudio recebido'}
+        onClick={() => setListen(!listen)}>{listen ? <Headphones size={19} /> : <HeadphoneOff size={19} />} Fone</button>
+      <button aria-pressed={Boolean(self?.media.camera)} disabled={!canCapture || state.policy.videoBlocked} onClick={() => toggle('camera')}>
+        {self?.media.camera ? <Camera size={19} /> : <CameraOff size={19} />} Câmera</button>
+      <button aria-pressed={Boolean(self?.media.screen)} disabled={!canCapture || state.policy.videoBlocked} onClick={() => toggle('screen')}>
+        {self?.media.screen ? <ScreenShareOff size={19} /> : <MonitorUp size={19} />} {self?.media.screen ? 'Parar compartilhamento' : 'Compartilhar tela'}</button>
+      {noiseSupported && <button aria-pressed={noiseEnabled} disabled={!self || capturing || changingNoise || state.closed}
+        onClick={toggleNoise}><AudioLines size={17} /> Redução de ruído</button>}
+      {(!isLive || state.publisher === session.account.id) &&
+        <label className="quality" title="A resolução efetiva depende da fonte e da rede">Qualidade de envio
+          <select value={state.quality} onChange={changeQuality} disabled={!self || capturing || changingQuality || state.closed}>
+            {Object.keys(videoProfiles).map((quality) => <option key={quality} value={quality}>{quality}p</option>)}
+          </select>
+        </label>}
+      {isLive
+        ? <button disabled={!connected || state.policy.videoBlocked && state.publisher !== session.account.id || Boolean(state.publisher && state.publisher !== session.account.id)}
+            onClick={() => runtime.current.send({ type: state.publisher === session.account.id ? 'live.stop' : 'live.start' })}>
+          <Radio size={19} /> {state.publisher === session.account.id ? 'Encerrar live' : 'Iniciar live'}</button>
+        : createLive && <button onClick={createLive}><Radio size={19} /> Criar live</button>}
+      <button ref={panelButton} aria-expanded={panelOpen} aria-controls="meeting-panel" onClick={() => {
+        setPanelOpen(true);
+        requestAnimationFrame(() => {
+          panel.current?.scrollIntoView({ block: 'nearest' });
+          panel.current?.focus({ preventScroll: true });
+        });
+      }}><MessageSquare size={17} /> Chat e pessoas</button>
+      <button className="danger" onClick={leave}><PhoneOff size={19} /> Sair da sala</button>
+    </div>
+    <section className="meeting-center" aria-label="Participantes e transmissões">
+      <div className={'stage' + (presentations.length ? ' stage-presenting' : audioStage ? ' stage-audio' : '')}>
         <div className="stage-status" aria-live="polite">
           {state.publisher && <span className="live-indicator"><Radio size={16} /> Ao vivo</span>}
+          {presentations.length > 1 && <span className="connection-indicator screen-count"><MonitorUp size={16} /> {presentations.length} telas</span>}
           <span className="connection-indicator"><AudioLines size={16} /> {state.media}</span>
         </div>
         {presentations.length > 0 ? <>
-          <div className="screens">{presentations.map((person) => <div className="screen" key={person.id}>
+          <div className="screens" role="group" aria-label="Telas compartilhadas">{presentations.map((person) => <div className="screen" key={person.id}>
             <VisualStream stream={person.media.screen} label={'Tela de ' + person.name} />
             <span className="tile-label">Tela de {person.name}</span>
           </div>)}</div>
@@ -231,32 +251,15 @@ export function Meeting({ room, group, session, verified, leave, report, createL
         {state.hasTurn ? 'A conexão de mídia falhou.' : 'A conexão direta falhou e o servidor não tem TURN configurado.'}
         {state.canChat && ' O chat segue disponível.'}
       </p>}
-      <div className="meeting-controls" aria-label="Controles de mídia">
-        {microphone}
-        <button aria-pressed={Boolean(self?.media.camera)} disabled={!canCapture || state.policy.videoBlocked} onClick={() => toggle('camera')}>
-          {self?.media.camera ? <Camera size={19} /> : <CameraOff size={19} />} Câmera</button>
-        <button aria-pressed={Boolean(self?.media.screen)} disabled={!canCapture || state.policy.videoBlocked} onClick={() => toggle('screen')}>
-          {self?.media.screen ? <ScreenShareOff size={19} /> : <MonitorUp size={19} />} {self?.media.screen ? 'Parar compartilhamento' : 'Compartilhar tela'}</button>
-        {isLive
-          ? <button disabled={!connected || state.policy.videoBlocked && state.publisher !== session.account.id || Boolean(state.publisher && state.publisher !== session.account.id)}
-              onClick={() => runtime.current.send({ type: state.publisher === session.account.id ? 'live.stop' : 'live.start' })}>
-            <Radio size={19} /> {state.publisher === session.account.id ? 'Encerrar live' : 'Iniciar live'}</button>
-          : createLive && <button onClick={createLive}><Radio size={19} /> Criar live</button>}
-        <button aria-expanded={panelOpen} aria-controls="meeting-panel" onClick={() => setPanelOpen(!panelOpen)}>
-          <MessageSquare size={17} /> {panelOpen ? 'Ocultar painel' : 'Mostrar painel'}</button>
-        {(!isLive || state.publisher === session.account.id) &&
-          <label className="quality" title="A resolução efetiva depende da fonte e da rede">Qualidade de envio
-            <select value={state.quality} onChange={changeQuality} disabled={!self || capturing || changingQuality || state.closed}>
-              {Object.keys(videoProfiles).map((quality) => <option key={quality} value={quality}>{quality}p</option>)}
-            </select>
-          </label>}
-        <button className="danger" onClick={leave}><PhoneOff size={19} /> Sair da sala</button>
-      </div>
     </section>
-    <aside id="meeting-panel" className="chat-panel" hidden={!panelOpen}>
+    <aside id="meeting-panel" className="chat-panel" aria-label="Chat e participantes" ref={panel} tabIndex={-1} hidden={!panelOpen}>
       <div className="pane-tabs" aria-label="Painel da sala">
         <button aria-pressed={tab === 'chat'} onClick={() => setTab('chat')}>Chat da sala</button>
         <button aria-pressed={tab === 'people'} onClick={() => setTab('people')}>Pessoas <span>{people}</span></button>
+        <button className="icon" title="Ocultar painel" aria-label="Ocultar painel" onClick={() => {
+          setPanelOpen(false);
+          panelButton.current.focus();
+        }}><X size={18} /></button>
       </div>
       {tab === 'chat' ? <Conversation messages={state.messages} roster={state.people} label="Chat da sala" self={session.account.id} busy={sending} available={state.canChat}
         empty="As mensagens da sala ficam disponíveis durante esta sessão."
@@ -265,7 +268,11 @@ export function Meeting({ room, group, session, verified, leave, report, createL
           try { await runtime.current.chat(text); return true; }
           catch (error) { report(error); return false; }
           finally { setSending(false); }
-        }} /> : <RoomPeople state={state} session={session} connection={runtime.current} report={report} />}
+        }} /> : <RoomPeople state={state} session={session} connection={runtime.current} report={report}
+          volumeFor={volumeFor} setVolume={(id, volume) => {
+            setVolumes((current) => ({ ...current, [id]: volume }));
+            writePreference(volumeKey(id), String(volume));
+          }} />}
     </aside>
   </div>;
 }

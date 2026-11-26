@@ -375,9 +375,12 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
             : 'O convite aparece na Atividade do seu amigo e vale por 24 horas.'}{legacy && ' O dono aprova a entrada neste grupo cifrado.'}</p>
         </> : <>
           <label>Nome<input name="name" autoFocus required maxLength={80} defaultValue={roomToRename?.name} /></label>
-          {dialog === 'room' && <label>Tipo<select name="mode">
-            {Object.entries(roomTypes).map(([mode, { label }]) => <option key={mode} value={mode}>{label}</option>)}
-          </select></label>}
+          {dialog === 'room' && <>
+            <label>Tipo<select name="mode">
+              {Object.entries(roomTypes).map(([mode, { label }]) => <option key={mode} value={mode}>{label}</option>)}
+            </select></label>
+            <p className="muted">Salas de voz e vídeo incluem chat, câmera e compartilhamento de tela.</p>
+          </>}
         </>}
         {error && <p className="error" role="alert">{error}</p>}
         <div className="modal-actions">
