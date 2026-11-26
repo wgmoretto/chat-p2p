@@ -142,8 +142,14 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     const chatId = friends.find(({ username }) => username === 'rafael').roomId;
     expect((await carol.request.get('/api/groups/' + chatId + '/messages')).status()).toBe(404);
     const clip = alice.getByRole('button', { name: 'Anexar arquivo', exact: true });
+    const bytes = Buffer.alloc(520 * 1024 + 17);
+    for (let index = 0; index < bytes.length; index++) bytes[index] = index % 251;
+    const file = { name: 'relatorio-teste.bin', mimeType: 'application/octet-stream', buffer: bytes };
+    const picker = alice.waitForEvent('filechooser');
     await clip.click();
-    await expect(alice.getByText('Os dois precisam abrir esta conversa para enviar arquivos.')).toBeVisible();
+    await (await picker).setFiles(file);
+    await expect(alice.getByText(/Aguardando seu amigo abrir esta conversa/)).toBeVisible();
+    await expect(clip).toBeDisabled();
     await contact(bob, 'Marina').click();
     await expect(bob.getByText(privateText)).toBeVisible();
     await expect(contact(bob, 'Marina').locator('.nav-count')).toHaveCount(0);
@@ -151,21 +157,23 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await expect(alice.getByText('Recebi. Vamos conversar aqui.')).toBeVisible();
     if (blockedIce) {
       await expect(clip).toHaveAttribute('data-ready', 'false');
-      await expect(alice.getByText('A conexão para arquivos está indisponível.', { exact: false })).toBeVisible({ timeout: 24_000 });
+      const retryFile = alice.getByRole('button', { name: 'Tentar novamente' });
+      await expect(retryFile).toBeVisible({ timeout: 36_000 });
+      await expect(alice.getByText(/A conexão direta falhou|Não foi possível conectar os navegadores/)).toBeVisible();
+      const retrySignal = alice.waitForEvent('websocket', (socket) => new URL(socket.url()).searchParams.get('purpose') === 'files');
+      await retryFile.click();
+      await retrySignal;
+      await expect(alice.getByText(file.name)).toBeVisible();
+      await alice.getByRole('button', { name: 'Cancelar anexo' }).click();
+      await expect(alice.getByText(file.name)).toBeHidden();
     } else {
       await expect(clip).toHaveAttribute('data-ready', 'true', { timeout: 15_000 });
-      await expect(alice.getByText('Os dois precisam abrir esta conversa para enviar arquivos.')).toBeHidden();
+      await expect(alice.getByText(/Aguardando seu amigo abrir esta conversa/)).toBeHidden();
       await expect(bob.getByRole('button', { name: 'Atender', exact: true })).toHaveCount(0);
       const input = alice.getByLabel('Selecionar arquivo');
-      const bytes = Buffer.alloc(520 * 1024 + 17);
-      for (let index = 0; index < bytes.length; index++) bytes[index] = index % 251;
-      const file = { name: 'relatorio-teste.bin', mimeType: 'application/octet-stream', buffer: bytes };
       const acceptFile = bob.getByRole('button', { name: 'Aceitar arquivo' });
       const saveFile = bob.getByRole('button', { name: 'Baixar arquivo' });
 
-      const picker = alice.waitForEvent('filechooser');
-      await clip.click();
-      await (await picker).setFiles(file);
       await expect(acceptFile).toBeVisible();
       await expect(saveFile).toHaveCount(0);
       await bob.getByRole('button', { name: 'Recusar arquivo' }).click();
@@ -176,7 +184,23 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
       await alice.getByRole('button', { name: 'Cancelar transferência' }).click();
       await expect(bob.getByText(/Transferência cancelada/)).toBeVisible();
 
-      await input.setInputFiles(file);
+      const dragged = await alice.evaluateHandle(({ size, name, type }) => {
+        const data = new DataTransfer();
+        const payload = Uint8Array.from({ length: size }, (_, index) => index % 251);
+        data.items.add(new File([payload], name, { type }));
+        return data;
+      }, { size: bytes.length, name: file.name, type: file.mimeType });
+      const log = alice.getByRole('log', { name: 'Conversa individual' });
+      await log.dispatchEvent('dragenter', { dataTransfer: dragged });
+      await expect(alice.getByText('Solte o arquivo para anexar')).toBeVisible();
+      await alice.screenshot({ path: testInfo.outputPath('arquivo-arrastar-desktop.png') });
+      await log.dispatchEvent('dragleave', { dataTransfer: dragged });
+      await expect(alice.getByText('Solte o arquivo para anexar')).toBeHidden();
+      await log.dispatchEvent('dragenter', { dataTransfer: dragged });
+      await log.dispatchEvent('dragover', { dataTransfer: dragged });
+      await log.dispatchEvent('drop', { dataTransfer: dragged });
+      await dragged.dispose();
+      await expect(alice.getByText('Solte o arquivo para anexar')).toBeHidden();
       await expect(acceptFile).toBeVisible();
       await bob.setViewportSize({ width: 390, height: 844 });
       await expect(acceptFile).toBeInViewport();
@@ -204,6 +228,9 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
 
     await contact(serverBrowser, 'Rafael').click();
     await expect(serverBrowser.getByText(privateText)).toBeVisible();
+    await serverBrowser.getByLabel('Selecionar arquivo').setInputFiles(file);
+    await expect(serverBrowser.getByText(/Esta conta já abriu a conexão para arquivos em outra aba ou navegador/)).toBeVisible();
+    await serverBrowser.getByRole('button', { name: 'Cancelar anexo' }).click();
     await alice.getByLabel('Tema').selectOption('dark');
     await alice.screenshot({ path: testInfo.outputPath('conversa-escura.png') });
     await alice.getByLabel('Tema').selectOption('light');

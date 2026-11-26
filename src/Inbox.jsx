@@ -104,7 +104,7 @@ export function Inbox({ id, contact, label = contact ? 'Conversa individual' : '
 
   const missing = people?.some(({ publicKey }) => !publicKey);
   const ready = !!people?.some(({ id, publicKey }) => id === session.account.id && publicKey) && (!contact || !missing);
-  return <>
+  return <div className="inbox-thread" {...files.dropTarget}>
     <div className="thread-info"><ShieldCheck size={16} aria-hidden="true" />
       {disconnected ? 'Recuperando a conexão…' : contact && missing ? 'Aguardando seu amigo entrar na versão atualizada.'
         : !contact && missing ? 'Alguns membros ainda precisam entrar na versão atualizada para receber mensagens.'
@@ -115,7 +115,8 @@ export function Inbox({ id, contact, label = contact ? 'Conversa individual' : '
       attachment={files.attachment} after={files.panel}
       before={older && <div className="thread-older"><button className="quiet" disabled={loadingOlder}
         onClick={loadOlder}>{loadingOlder ? 'Carregando…' : 'Mensagens anteriores'}</button></div>} />
-  </>;
+    {files.dropPrompt}
+  </div>;
 }
 
 export function Activity({ friends, invites, ready, busy, add, respond, reply, open }) {

@@ -482,9 +482,7 @@ export class RoomConnection {
 
   render() {
     if (this.filesOnly) {
-      const peers = [...this.peers.values()];
-      const failed = Boolean(this.closed) || peers.some(({ pc, mediaDelayed }) => mediaDelayed || pc.connectionState === 'failed');
-      this.onState({ peers: peers.length, failed });
+      this.onState({ peers: this.peers.size, closed: Boolean(this.closed), hasTurn: Boolean(this.hasTurn) });
       return;
     }
     const people = this.map.flatMap((policy) => {

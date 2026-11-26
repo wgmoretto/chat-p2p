@@ -199,6 +199,10 @@ export function attachRooms(server, db, config) {
           restrictions: new Map(), excluded: new Set() };
         rooms.set(key, room);
       }
+      if (filesOnly && room.peers.has(account.id)) {
+        ws.close(4003, 'Esta conta já abriu a conexão para arquivos em outra aba ou navegador.');
+        return;
+      }
       const capacity = room.chat_mode === 'contact' ? 2 : limits[room.mode];
       if (room.excluded.has(account.id) || room.peers.has(account.id) || room.peers.size >= capacity) {
         ws.close(4003, 'Sala cheia, acesso revogado ou conta já conectada.');

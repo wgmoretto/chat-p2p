@@ -168,6 +168,8 @@ button.mobile-nav-toggle { display: none; }
 .composer-inner { display: flex; align-items: end; gap: 9px; width: min(100%, 55rem); margin-inline: auto; }
 .composer textarea { flex: 1; field-sizing: content; resize: none; max-height: 108px; min-height: 44px; line-height: 1.45; padding: 10px 11px; }
 .composer button { min-height: 44px; }
+.inbox-thread { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; }
+.file-drop-prompt { position: absolute; inset: 12px; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 16px; border: 2px dashed var(--accent); border-radius: var(--radius); background: var(--tint); color: var(--accent-dark); font-weight: 700; text-align: center; pointer-events: none; }
 .composer .attach-file { flex: none; width: 44px; }
 .composer .attach-file svg { display: block; }
 .file-share, .file-share-hint { flex: none; width: min(calc(100% - 2 * var(--gutter)), 55rem); margin: 0 auto 8px; }
