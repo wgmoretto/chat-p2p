@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Link2, LockKeyhole, Monitor, Moon, Send, ShieldCheck, Sun, UserPlus, Users } from 'lucide-react';
+import { ArrowRight, Link2, LockKeyhole, MessageSquare, Monitor, MonitorUp, Moon, Send, ShieldCheck, Sun, UserPlus, Users, Video, X } from 'lucide-react';
 import { login, register } from './workspace.mjs';
 
 export function Brand() {
-  return <div className="brand"><Link2 aria-hidden="true" size={32} strokeWidth={2.7} /><span>Chat P2P</span></div>;
+  return <div className="brand">
+    <span className="brand-mark" aria-hidden="true"><Link2 size={23} strokeWidth={2.4} /></span>
+    <span>Chat P2P</span>
+  </div>;
 }
 
 export function ThemePicker({ theme, change }) {
@@ -35,11 +38,15 @@ export function Access({ bootstrap, signup, invite, onSession, appearance }) {
   return <main className="access">
     <section className="access-intro">
       <Brand />
-      <div>
-        <h1>Onde a equipe se encontra.</h1>
-        <p>Reuniões, conversas e compartilhamento de tela em um espaço privado.</p>
+      <div className="access-copy">
+        <h1>Conversas e reuniões da sua equipe</h1>
+        <p>Um espaço privado para trabalhar junto, em uma instalação gerenciada pela sua equipe.</p>
+        <ul className="access-features">
+          <li><MessageSquare size={18} aria-hidden="true" /> Conversas com histórico cifrado</li>
+          <li><Video size={18} aria-hidden="true" /> Reuniões e lives</li>
+          <li><MonitorUp size={18} aria-hidden="true" /> Compartilhamento de tela</li>
+        </ul>
       </div>
-      <p className="privacy"><LockKeyhole size={17} /> Comunicação criptografada</p>
     </section>
     <section className="access-panel">
       {appearance}
@@ -71,12 +78,16 @@ export function Modal({ title, children, close }) {
     ref.current.showModal();
   }, []);
   return <dialog ref={ref} className="modal" aria-labelledby="modal-title" onCancel={(event) => { event.preventDefault(); close(); }}>
-    <h2 id="modal-title">{title}</h2>
+    <header className="modal-header">
+      <h2 id="modal-title">{title}</h2>
+      <button className="icon" type="button" onClick={close} aria-label="Dispensar janela"><X size={19} /></button>
+    </header>
     {children}
   </dialog>;
 }
 
 const date = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const calendarDay = new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
 export const initials = (value = '') => value.trim().split(/\s+/).slice(0, 2).map((item) => item[0]?.toUpperCase()).join('');
 
 function Message({ item, roster, self }) {
@@ -98,19 +109,39 @@ export function Conversation({ messages, roster, onSend, busy, label, available,
   async function submit(event) {
     event.preventDefault();
     const outgoing = value.trim();
-    if (outgoing && await onSend(outgoing)) setValue('');
+    if (!busy && available && outgoing && await onSend(outgoing)) {
+      setValue((current) => current === value ? '' : current);
+    }
   }
+  const today = messages.length ? calendarDay.format(Date.now()) : '';
   return <>
     {before}
     <div className="conversation-scroll" ref={scroll} role="log" aria-label={label}>
-      {messages.length ? messages.map((item) => <Message key={item.id} item={item} roster={roster} self={self} />)
-        : <div className="chat-empty"><LockKeyhole size={23} /><p>{empty}</p></div>}
+      {messages.length ? <div className="conversation-history">{messages.map((item, index) => {
+        const day = calendarDay.format(item.created);
+        const previous = messages[index - 1];
+        return <React.Fragment key={item.id}>
+          {(!previous || calendarDay.format(previous.created) !== day) &&
+            <div className="message-day"><span>{day === today ? 'Hoje' : day}</span></div>}
+          <Message item={item} roster={roster} self={self} />
+        </React.Fragment>;
+      })}</div>
+        : <div className="chat-empty"><span className="empty-symbol"><MessageSquare size={22} aria-hidden="true" /></span><p>{empty}</p></div>}
     </div>
     <form className="composer" onSubmit={submit}>
-      <label className="sr-only" htmlFor="chat-message">Mensagem</label>
-      <input id="chat-message" placeholder="Mensagem" value={value} onChange={(event) => setValue(event.target.value)}
-        autoComplete="off" maxLength={1500} disabled={!available} />
-      <button className="primary" disabled={busy || !available || !value.trim()}>Enviar<Send size={15} aria-hidden="true" /></button>
+      <div className="composer-inner">
+        <label className="sr-only" htmlFor="chat-message">Mensagem</label>
+        <textarea id="chat-message" rows={1} placeholder="Escreva uma mensagem" value={value}
+          onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              event.currentTarget.form.requestSubmit();
+            }
+          }} autoComplete="off" maxLength={1500} disabled={!available} />
+        <button className="primary" title="Enviar mensagem" disabled={busy || !available || !value.trim()}>
+          Enviar <Send size={16} aria-hidden="true" />
+        </button>
+      </div>
     </form>
   </>;
 }

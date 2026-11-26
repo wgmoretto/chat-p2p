@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LockKeyhole, MessageSquare, ShieldCheck } from 'lucide-react';
+import { Bell, LockKeyhole, MailPlus, PhoneIncoming, ShieldCheck, UserRoundPlus } from 'lucide-react';
 import { decryptMessage, sendMessage } from './inbox.mjs';
 import { request } from './local.mjs';
 import { Conversation } from './views.jsx';
@@ -122,7 +122,10 @@ export function Activity({ friends, invites, ready, busy, add, respond, reply, o
     {invites.length > 0 && <section className="activity-block">
       <h2>Convites de grupo</h2>
       <ul>{invites.map((item) => <li key={item.token}>
-        <div><strong>{item.name}</strong><p>{item.inviter} convidou você como {item.role === 'moderator' ? 'moderador' : 'membro'}.</p></div>
+        <div className="activity-detail">
+          <span className="item-icon"><MailPlus size={19} aria-hidden="true" /></span>
+          <div><strong>{item.name}</strong><p>{item.inviter} convidou você como {item.role === 'moderator' ? 'moderador' : 'membro'}.</p></div>
+        </div>
         <div className="activity-actions"><button disabled={busy} onClick={() => respond(item, false)}>Recusar</button>
           <button className="primary" disabled={busy} onClick={() => respond(item, true)}>Aceitar convite</button></div>
       </li>)}</ul>
@@ -130,21 +133,27 @@ export function Activity({ friends, invites, ready, busy, add, respond, reply, o
     {requests.length > 0 && <section className="activity-block">
       <h2>Pedidos de amizade</h2>
       <ul>{requests.map((person) => <li key={person.id}>
-        <div><strong>{person.name}</strong><p>@{person.username} · {person.incoming ? 'Pedido recebido' : 'Pedido enviado'}</p></div>
+        <div className="activity-detail">
+          <span className="item-icon"><UserRoundPlus size={19} aria-hidden="true" /></span>
+          <div><strong>{person.name}</strong><p>@{person.username} · {person.incoming ? 'Pedido recebido' : 'Pedido enviado'}</p></div>
+        </div>
         <div className="activity-actions"><button disabled={busy} onClick={() => reply(person, 'remove')}>
           {person.incoming ? 'Recusar' : 'Cancelar pedido'}</button>
           {person.incoming && <button className="primary" disabled={busy} onClick={() => reply(person, 'accept')}>Aceitar</button>}</div>
       </li>)}</ul>
     </section>}
     {!requests.length && !invites.length && !calls.length && <div className="activity-empty">
-      <span className="empty-symbol"><MessageSquare size={27} aria-hidden="true" /></span>
+      <span className="empty-symbol"><Bell size={24} aria-hidden="true" /></span>
       <h2>{ready ? 'Nenhum pedido pendente' : 'Carregando a atividade'}</h2>
       {ready && <p>Escolha uma conversa na lista ou adicione alguém pelo @usuário.</p>}
       {ready && <button className="primary" onClick={add}>Adicionar amigo</button>}
     </div>}
     {calls.length > 0 && <section className="activity-block"><h2>Chamadas recebidas</h2>
       <ul>{calls.map((person) => <li key={person.id}>
-        <strong>{person.name}</strong><button className="primary" onClick={() => open(person, true)}>Atender</button>
+        <div className="activity-detail">
+          <span className="item-icon"><PhoneIncoming size={19} aria-hidden="true" /></span><strong>{person.name}</strong>
+        </div>
+        <button className="primary" onClick={() => open(person, true)}>Atender</button>
       </li>)}</ul></section>}
   </section>;
 }

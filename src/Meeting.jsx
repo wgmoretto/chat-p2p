@@ -182,7 +182,7 @@ export function Meeting({ room, group, session, verified, leave, report, createL
             {isLive && connected && <small>{people} {people === 1 ? 'pessoa na sala' : 'pessoas na sala'}</small>}
           </div>}
       </div>
-      {state.mediaFailed && <p className="muted" role="status">
+      {state.mediaFailed && <p className="media-notice" role="status">
         {state.hasTurn ? 'A conexão de mídia falhou.' : 'A conexão direta falhou e o servidor não tem TURN configurado.'}
         {state.canChat && ' O chat segue disponível.'}
       </p>}
@@ -214,7 +214,7 @@ export function Meeting({ room, group, session, verified, leave, report, createL
         <button aria-pressed={tab === 'chat'} onClick={() => setTab('chat')}>Chat da sala</button>
         <button aria-pressed={tab === 'people'} onClick={() => setTab('people')}>Pessoas <span>{people}</span></button>
       </div>
-      {tab === 'chat' ? <Conversation messages={state.messages} roster={state.people} label="Chat da sala" busy={sending} available={state.canChat}
+      {tab === 'chat' ? <Conversation messages={state.messages} roster={state.people} label="Chat da sala" self={session.account.id} busy={sending} available={state.canChat}
         empty="As mensagens da sala ficam disponíveis durante esta sessão."
         onSend={async (text) => {
           setSending(true);

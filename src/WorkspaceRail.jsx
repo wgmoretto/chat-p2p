@@ -23,7 +23,12 @@ export function WorkspaceRail({ groups, friends, group, groupRooms, room, contac
   const visibleGroups = groups.filter(({ name, unread }) => unread || matches(name));
   const navigate = (action) => { setExpanded(false); action(); };
 
-  return <aside className="sidebar">
+  return <aside className="sidebar" onKeyDown={(event) => {
+    if (event.key === 'Escape' && expanded) {
+      setExpanded(false);
+      event.currentTarget.querySelector('.mobile-nav-toggle')?.focus();
+    }
+  }}>
     <div className="sidebar-top">
       <Brand />
       <button className="icon mobile-nav-toggle" aria-label={expanded ? 'Fechar navegação' : 'Abrir navegação'}
@@ -55,9 +60,12 @@ export function WorkspaceRail({ groups, friends, group, groupRooms, room, contac
         <div className="nav-heading"><h2>Grupos</h2>
           <button className="icon" aria-label="Novo grupo" title="Novo grupo" onClick={() => navigate(() => create('group'))}><Plus size={19} /></button>
         </div>
-        <ul>{visibleGroups.map((item) => <li key={item.id}>
+        <ul className="group-list">{visibleGroups.map((item) => <li key={item.id}>
           <button className="nav-item" aria-current={item.id === group?.id && !room ? 'page' : undefined}
-            onClick={() => navigate(() => select(item.id))}><Users size={18} /><span>{item.name}</span><Count value={item.unread} label="mensagens não lidas" /></button>
+            onClick={() => navigate(() => select(item.id))}>
+            <span className="nav-symbol"><Users size={17} aria-hidden="true" /></span>
+            <span className="nav-item-name">{item.name}</span><Count value={item.unread} label="mensagens não lidas" />
+          </button>
         </li>)}</ul>
         {group?.status === 'active' && <section className="rail-rooms" aria-label="Salas do grupo">
           <div className="nav-heading"><h2>Salas</h2>

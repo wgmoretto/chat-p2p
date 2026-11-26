@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ArrowUpRight, CircleHelp, LockKeyhole, Pencil, Phone, Plus, Radio, UserMinus, Users, Video } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Bell, CircleHelp, LockKeyhole, Pencil, Phone, Plus, Radio, UserMinus, Users, Video } from 'lucide-react';
 import { readPreference, request, writePreference } from './local.mjs';
 import { changeMembership, makeInvite, newGroup, postGroupMessage, readInvite,
   requestAdmission, restore, syncGroup } from './workspace.mjs';
@@ -162,6 +162,7 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
   function enterRoom(item) {
     enter(item);
     setError('');
+    setFeedback('');
   }
 
   function open(kind, target = null) {
@@ -220,7 +221,7 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
         const mode = dialog === 'live' ? 'live' : data.mode;
         const created = await request('groups/' + group.id + '/rooms', { name: data.name, mode });
         setRoomList((current) => ({ id: group.id, rooms: [created, ...(current.id === group.id ? current.rooms : [])] }));
-        enter(created);
+        enterRoom(created);
         setDialog(null);
       }
     });
@@ -264,21 +265,31 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
     });
   }
 
+  const surface = activeRoom || contact && contactCall ? 'meeting'
+    : contact || active ? 'conversation' : 'activity';
+  const HeaderIcon = activeRoom ? (activeRoom.mode === 'live' ? Radio : Video) : group ? Users : Bell;
+
   return <div className="workspace">
     <WorkspaceRail groups={groups} friends={friends} group={group} groupRooms={roomListForGroup} room={activeRoom}
       contact={contact} session={session} appearance={appearance} ready={ready}
       canJoin={canJoin} notice={notice} showActivity={() => switchGroup(null)} openContact={openContact}
       select={switchGroup} enter={enterRoom} create={open}
       logout={() => run(async () => { await request('logout', {}); onLogout(); })} />
-    <main className="main-panel">
+    <main className="main-panel" data-surface={surface}>
       <header className="workspace-header">
-        <div>
+        <div className="workspace-identity">
           {activeRoom && <button className="breadcrumb" onClick={() => enter(null)}><ArrowLeft size={16} aria-hidden="true" /> {group.name}</button>}
           {contactCall && contact && <button className="breadcrumb" onClick={() => setContactCall(false)}><ArrowLeft size={16} aria-hidden="true" /> Conversa</button>}
           {contact ? <div className="thread-heading">
             <span className="avatar" aria-hidden="true">{initials(contact.name)}</span>
             <div><h1>{contact.name}</h1><Presence person={contact} /></div>
-          </div> : <h1>{activeRoom?.name ?? group?.name ?? 'Atividade'}</h1>}
+          </div> : <div className="thread-heading">
+            <span className="header-symbol"><HeaderIcon size={20} aria-hidden="true" /></span>
+            <div>
+              <h1>{activeRoom?.name ?? group?.name ?? 'Atividade'}</h1>
+              {group && <small>{activeRoom ? (activeRoom.mode === 'live' ? 'Live' : 'Reunião') : 'Grupo privado'}</small>}
+            </div>
+          </div>}
         </div>
         {contact && !contactCall && <div className="header-actions">
           <button className="icon" aria-label="Remover amigo" title="Remover amigo" onClick={() => open('remove-friend')}><UserMinus size={18} /></button>

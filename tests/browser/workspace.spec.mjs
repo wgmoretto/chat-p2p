@@ -67,6 +67,12 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await expect(serverBrowser.getByRole('heading', { name: 'Atividade', exact: true })).toBeVisible();
 
     await alice.goto('/');
+    await expect(alice.getByRole('heading', { name: 'Entrar no Chat P2P' })).toBeVisible();
+    await alice.screenshot({ path: testInfo.outputPath('login-desktop.png') });
+    await alice.setViewportSize({ width: 390, height: 844 });
+    await expect(alice.getByRole('button', { name: 'Entrar', exact: true })).toBeInViewport();
+    await alice.screenshot({ path: testInfo.outputPath('login-mobile.png') });
+    await alice.setViewportSize({ width: 1440, height: 900 });
     await alice.getByLabel('Usuário').fill('marina');
     await alice.getByLabel('Senha').fill('senha-para-teste-e2e');
     await alice.getByRole('button', { name: 'Entrar', exact: true }).click();
@@ -118,7 +124,14 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     const posted = (await ciphertext).postDataJSON();
     expect(JSON.stringify(posted)).not.toContain(privateText);
     expect(posted.recipients).toHaveLength(2);
-    await send(alice, 'Segunda mensagem na conversa.');
+    const composer = alice.getByRole('textbox', { name: 'Mensagem' });
+    await composer.fill('Segunda mensagem na conversa.');
+    await composer.press('End');
+    await composer.press('Shift+Enter');
+    await composer.pressSequentially('Uma segunda linha.');
+    await expect(composer).toHaveValue('Segunda mensagem na conversa.\nUma segunda linha.');
+    await composer.press('Enter');
+    await expect(alice.getByRole('log').getByText(/Uma segunda linha/)).toBeVisible();
     await expect(contact(bob, 'Marina').locator('.nav-count')).toHaveText('2');
     const friends = await (await alice.request.get('/api/friends')).json();
     const chatId = friends.find(({ username }) => username === 'rafael').roomId;
@@ -135,9 +148,12 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await alice.getByLabel('Tema').selectOption('light');
     await alice.screenshot({ path: testInfo.outputPath('conversa-clara.png') });
     await alice.setViewportSize({ width: 390, height: 844 });
+    await expect(composer).toBeInViewport();
+    await alice.screenshot({ path: testInfo.outputPath('conversa-mobile.png') });
     await alice.getByRole('button', { name: 'Abrir navegação' }).click();
     await alice.screenshot({ path: testInfo.outputPath('navegacao-mobile.png') });
-    await alice.getByRole('button', { name: 'Fechar navegação' }).click();
+    await alice.keyboard.press('Escape');
+    await expect(alice.getByRole('navigation')).toBeHidden();
     await alice.setViewportSize({ width: 1440, height: 900 });
     await alice.getByRole('button', { name: 'Ligar' }).click();
     await bob.getByRole('button', { name: 'Atender', exact: true }).click();
@@ -176,6 +192,7 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await bob.screenshot({ path: testInfo.outputPath('grupo-nao-lida.png') });
     await bobGroup.click();
     await expect(bob.getByText('Mensagem persistente do grupo.')).toBeVisible();
+    await bob.screenshot({ path: testInfo.outputPath('grupo-desktop.png') });
     await expect(bobGroup.locator('.nav-count')).toHaveCount(0);
     await invite(alice, carol, 'moderator');
     await newRoom(alice, 'Reunião semanal', 'meet');
@@ -204,6 +221,7 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await send(bob, 'Bom dia! Podemos começar.');
     await expect(alice.getByText('Bom dia! Podemos começar.')).toBeVisible();
     await expect(alice.getByLabel('Qualidade de envio')).toBeInViewport();
+    await expect(alice.getByRole('heading', { name: 'Reunião da equipe', exact: true })).toBeInViewport();
     await alice.screenshot({ path: testInfo.outputPath('reuniao-desktop.png') });
     await bob.setViewportSize({ width: 390, height: 844 });
     expect(await bob.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
@@ -286,6 +304,7 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await expect(carol.getByRole('button', { name: 'Iniciar live' })).toBeDisabled();
     await bob.getByRole('button', { name: 'Câmera', exact: true }).click();
     await waitVideo(carol, 'Câmera de Rafael');
+    await carol.screenshot({ path: testInfo.outputPath('live-desktop.png') });
     await carol.setViewportSize({ width: 390, height: 844 });
     await carol.getByRole('button', { name: 'Maximizar câmera de rafael' }).click();
     await expect(carol.getByRole('dialog', { name: 'Câmera de Rafael' }).getByText(/Resolução atual/)).toBeVisible();
