@@ -48,7 +48,7 @@ class Peer {
       this.room.render();
     };
     this.pc.ondatachannel = ({ channel }) => {
-      if (room.hasChat && !this.initiator && channel.label === 'room') this.bindChannel(channel);
+      if (!this.initiator && room.channelName && channel.label === room.channelName) this.bindChannel(channel);
       else channel.close();
     };
     this.pc.onconnectionstatechange = () => {
@@ -64,7 +64,7 @@ class Peer {
     };
     if (this.initiator) {
       for (const kind of room.mediaKinds) this.pc.addTransceiver(kind === 'mic' ? 'audio' : 'video', { direction: 'sendrecv' });
-      if (room.hasChat) this.bindChannel(this.pc.createDataChannel('room', { ordered: true }));
+      if (room.channelName) this.bindChannel(this.pc.createDataChannel(room.channelName, { ordered: true }));
       this.offer(false).catch((error) => this.room.report(error));
     }
   }
@@ -118,6 +118,10 @@ class Peer {
       return;
     }
     this.channel = channel;
+    if (this.room.filesOnly) {
+      this.room.onFileChannel(channel);
+      return;
+    }
     channel.onopen = () => {
       this.announce();
       this.room.render();
@@ -155,6 +159,7 @@ class Peer {
   }
 
   async setTracks() {
+    if (this.room.filesOnly) return;
     await Promise.all(this.pc.getTransceivers().map(async ({ sender }, index) => {
       const kind = this.room.mediaKinds[index];
       const track = kind ? this.room.sendTrack(kind) : null;
@@ -172,7 +177,7 @@ class Peer {
     const raw = this.pc.localDescription;
     const description = { type: raw.type, sdp: raw.sdp };
     const counter = ++this.counter;
-    const values = descriptionStatement(this.room.id, this.room.self, this.member, counter, description);
+    const values = descriptionStatement(this.room.signalScope, this.room.self, this.member, counter, description);
     const signature = await sign(this.room.device.privateKey, values);
     this.send({ type: 'sdp', description, counter, signature });
   }
@@ -206,7 +211,7 @@ class Peer {
     const { description, counter, signature } = event;
     if ((this.initiator ? 'answer' : 'offer') !== description?.type || !Number.isSafeInteger(counter) ||
         counter <= this.remoteCounter ||
-        !await verify(signing, signature, descriptionStatement(this.room.id, this.member, this.room.self, counter, description)))
+        !await verify(signing, signature, descriptionStatement(this.room.signalScope, this.member, this.room.self, counter, description)))
       throw Error('Uma conexão com assinatura inválida foi recusada.');
     this.remoteCounter = counter;
     await this.pc.setRemoteDescription(description);
@@ -230,11 +235,15 @@ class Peer {
 }
 
 export class RoomConnection {
-  constructor(room, group, session, roster, onState, onError) {
+  constructor(room, group, session, roster, onState, onError, onFileChannel) {
     this.id = room.id;
     this.mode = room.mode;
-    this.hasChat = room.mode !== 'voice';
-    this.mediaKinds = room.mode === 'voice' ? ['mic'] : mediaOrder;
+    this.filesOnly = room.mode === 'files';
+    this.hasChat = !this.filesOnly && room.mode !== 'voice';
+    this.channelName = this.filesOnly ? 'files-v1' : this.hasChat ? 'room' : null;
+    this.signalScope = this.filesOnly ? 'files:' + room.id : room.id;
+    this.mediaKinds = this.filesOnly ? [] : room.mode === 'voice' ? ['mic'] : mediaOrder;
+    this.onFileChannel = onFileChannel;
     this.device = group.chat_mode === 'mls' ? session.identity : null;
     this.roster = roster;
     this.onState = onState;
@@ -269,6 +278,7 @@ export class RoomConnection {
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     url.search = new URLSearchParams({
       room: this.id, instance: this.instance, signing: this.device.signing,
+      ...(this.filesOnly && { purpose: 'files' }),
       ...(this.chatIdentity && { chatKey: this.chatIdentity.chatKey, chatProof: this.chatIdentity.chatProof }),
     }).toString();
     this.socket = new WebSocket(url);
@@ -287,7 +297,7 @@ export class RoomConnection {
       if (!this.expiry) this.expiry = setTimeout(() => this.close(), 15_000);
       this.reconnect = setTimeout(() => { this.connect(ice).catch((error) => this.report(error)); }, Math.min(3000, 500 * ++this.retries));
     };
-    if (!this.metrics) this.metrics = setInterval(() => this.reportStats().catch(() => {}), 4000);
+    if (!this.filesOnly && !this.metrics) this.metrics = setInterval(() => this.reportStats().catch(() => {}), 4000);
     this.render();
   }
 
@@ -471,6 +481,12 @@ export class RoomConnection {
   }
 
   render() {
+    if (this.filesOnly) {
+      const peers = [...this.peers.values()];
+      const failed = Boolean(this.closed) || peers.some(({ pc, mediaDelayed }) => mediaDelayed || pc.connectionState === 'failed');
+      this.onState({ peers: peers.length, failed });
+      return;
+    }
     const people = this.map.flatMap((policy) => {
       const account = this.trustedMember(policy);
       if (!account) return [];

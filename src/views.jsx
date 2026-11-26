@@ -108,7 +108,7 @@ function Message({ item, roster, self }) {
   </div>;
 }
 
-export function Conversation({ messages, roster, onSend, busy, label, available, empty, before, self }) {
+export function Conversation({ messages, roster, onSend, busy, label, available, empty, before, self, attachment, after }) {
   const scroll = useRef(null);
   const [value, setValue] = useState('');
   const latest = messages.at(-1)?.id;
@@ -135,8 +135,10 @@ export function Conversation({ messages, roster, onSend, busy, label, available,
       })}</div>
         : <div className="chat-empty"><span className="empty-symbol"><MessageSquare size={22} aria-hidden="true" /></span><p>{empty}</p></div>}
     </div>
+    {after}
     <form className="composer" onSubmit={submit}>
       <div className="composer-inner">
+        {attachment}
         <label className="sr-only" htmlFor="chat-message">Mensagem</label>
         <textarea id="chat-message" rows={1} placeholder="Escreva uma mensagem" value={value}
           onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => {

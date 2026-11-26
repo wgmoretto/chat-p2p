@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { test, expect } from '@playwright/test';
 
 async function account(page, name, username, bootstrap = false) {
@@ -53,9 +54,12 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     })));
     const [alice, bob, carol, serverBrowser] = await Promise.all(contexts.map((ctx) => ctx.newPage()));
     const relayed = [];
+    const fileSignals = [];
     alice.on('websocket', (socket) => {
-      if (!new URL(socket.url()).pathname.endsWith('/signal')) return;
+      const url = new URL(socket.url());
+      if (!url.pathname.endsWith('/signal')) return;
       socket.on('framesent', ({ payload }) => {
+        if (url.searchParams.get('purpose') === 'files') fileSignals.push(payload);
         if (typeof payload !== 'string') return;
         const frame = JSON.parse(payload);
         if (frame.type === 'chat') relayed.push(frame);
@@ -137,11 +141,67 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     const friends = await (await alice.request.get('/api/friends')).json();
     const chatId = friends.find(({ username }) => username === 'rafael').roomId;
     expect((await carol.request.get('/api/groups/' + chatId + '/messages')).status()).toBe(404);
+    const clip = alice.getByRole('button', { name: 'Anexar arquivo', exact: true });
+    await clip.click();
+    await expect(alice.getByText('Os dois precisam abrir esta conversa para enviar arquivos.')).toBeVisible();
     await contact(bob, 'Marina').click();
     await expect(bob.getByText(privateText)).toBeVisible();
     await expect(contact(bob, 'Marina').locator('.nav-count')).toHaveCount(0);
     await send(bob, 'Recebi. Vamos conversar aqui.');
     await expect(alice.getByText('Recebi. Vamos conversar aqui.')).toBeVisible();
+    if (blockedIce) {
+      await expect(clip).toHaveAttribute('data-ready', 'false');
+      await expect(alice.getByText('A conexão para arquivos está indisponível.', { exact: false })).toBeVisible({ timeout: 24_000 });
+    } else {
+      await expect(clip).toHaveAttribute('data-ready', 'true', { timeout: 15_000 });
+      await expect(alice.getByText('Os dois precisam abrir esta conversa para enviar arquivos.')).toBeHidden();
+      await expect(bob.getByRole('button', { name: 'Atender', exact: true })).toHaveCount(0);
+      const input = alice.getByLabel('Selecionar arquivo');
+      const bytes = Buffer.alloc(520 * 1024 + 17);
+      for (let index = 0; index < bytes.length; index++) bytes[index] = index % 251;
+      const file = { name: 'relatorio-teste.bin', mimeType: 'application/octet-stream', buffer: bytes };
+      const acceptFile = bob.getByRole('button', { name: 'Aceitar arquivo' });
+      const saveFile = bob.getByRole('button', { name: 'Baixar arquivo' });
+
+      const picker = alice.waitForEvent('filechooser');
+      await clip.click();
+      await (await picker).setFiles(file);
+      await expect(acceptFile).toBeVisible();
+      await expect(saveFile).toHaveCount(0);
+      await bob.getByRole('button', { name: 'Recusar arquivo' }).click();
+      await expect(alice.getByText(/Arquivo recusado/)).toBeVisible();
+
+      await input.setInputFiles(file);
+      await expect(acceptFile).toBeVisible();
+      await alice.getByRole('button', { name: 'Cancelar transferência' }).click();
+      await expect(bob.getByText(/Transferência cancelada/)).toBeVisible();
+
+      await input.setInputFiles(file);
+      await expect(acceptFile).toBeVisible();
+      await bob.setViewportSize({ width: 390, height: 844 });
+      await expect(acceptFile).toBeInViewport();
+      await expect(bob.getByRole('button', { name: 'Anexar arquivo' })).toBeInViewport();
+      expect(await bob.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+      await bob.screenshot({ path: testInfo.outputPath('arquivo-oferta-mobile.png') });
+      await acceptFile.click();
+      await expect(alice.getByText(/Arquivo entregue/)).toBeVisible();
+      const download = bob.waitForEvent('download');
+      await saveFile.click();
+      const downloaded = await download;
+      expect(downloaded.suggestedFilename()).toBe(file.name);
+      expect(await readFile(await downloaded.path())).toEqual(bytes);
+      await expect(saveFile).toBeVisible();
+      await bob.getByRole('button', { name: 'Dispensar' }).click();
+      await expect(saveFile).toHaveCount(0);
+      await bob.setViewportSize({ width: 1440, height: 900 });
+    }
+    expect(fileSignals.length).toBeGreaterThan(0);
+    for (const signal of fileSignals) {
+      expect(typeof signal).toBe('string');
+      expect(['sdp', 'ice', 'leave']).toContain(JSON.parse(signal).type);
+      expect(signal).not.toContain('relatorio-teste.bin');
+    }
+
     await contact(serverBrowser, 'Rafael').click();
     await expect(serverBrowser.getByText(privateText)).toBeVisible();
     await alice.getByLabel('Tema').selectOption('dark');

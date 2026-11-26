@@ -46,7 +46,7 @@ export function attachRooms(server, db, config) {
     if (room.peers.get(peer.id) !== peer) return;
     room.peers.delete(peer.id);
     if (room.publisher === peer.id) room.publisher = null;
-    if (room.peers.size === 0) rooms.delete(room.id);
+    if (room.peers.size === 0) rooms.delete(room.key);
     else {
       elect(room);
       publish(room);
@@ -115,6 +115,7 @@ export function attachRooms(server, db, config) {
     let message;
     try { message = JSON.parse(raw.toString()); } catch { return; }
     if (!message || typeof message !== 'object') return;
+    if (room.filesOnly && !['sdp','ice','leave'].includes(message.type)) return;
     if (room.mode === 'voice' && message.type === 'chat') return;
     switch (message.type) {
       case 'sdp':
@@ -169,13 +170,16 @@ export function attachRooms(server, db, config) {
     const url = new URL(req.url, config.origin);
     const id = url.searchParams.get('room');
     const instance = url.searchParams.get('instance');
+    const purpose = url.searchParams.get('purpose');
+    const filesOnly = purpose === 'files';
     const account = config.authenticate(req);
     const signing = url.searchParams.get('signing') ?? account?.signing;
     const chatKey = url.searchParams.get('chatKey');
     const chatProof = url.searchParams.get('chatProof');
     const chatValid = chatKey === null && chatProof === null || encoded(chatKey, 110, 140) && encoded(chatProof, 86, 86);
     if (url.pathname !== '/signal' || req.headers.origin !== config.origin || !idPattern.test(id) ||
-        !idPattern.test(instance) || !account || !encoded(signing, 110, 140) || !chatValid) {
+        !idPattern.test(instance) || !account || !encoded(signing, 110, 140) || !chatValid ||
+        (purpose !== null && !filesOnly) || (filesOnly && chatKey !== null)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return;
     }
@@ -183,15 +187,17 @@ export function attachRooms(server, db, config) {
       ws.on('error', () => {});
       const profile = roomLookup.get(id);
       const membership = profile && config.member.get(profile.group_id, account.id);
-      if (!profile || profile.mode === 'text' || membership?.status !== 'active' || (profile.chat_mode === 'mls' && signing !== account.signing)) {
+      if (!profile || profile.mode === 'text' || membership?.status !== 'active' ||
+          (filesOnly && profile.chat_mode !== 'contact') || (profile.chat_mode === 'mls' && signing !== account.signing)) {
         ws.close(4003, 'Sala indisponível.');
         return;
       }
-      let room = rooms.get(id);
+      const key = filesOnly ? 'files:' + id : id;
+      let room = rooms.get(key);
       if (!room) {
-        room = { ...profile, term: 0, host: null, publisher: null, peers: new Map(),
+        room = { ...profile, key, filesOnly, term: 0, host: null, publisher: null, peers: new Map(),
           restrictions: new Map(), excluded: new Set() };
-        rooms.set(id, room);
+        rooms.set(key, room);
       }
       const capacity = room.chat_mode === 'contact' ? 2 : limits[room.mode];
       if (room.excluded.has(account.id) || room.peers.has(account.id) || room.peers.size >= capacity) {

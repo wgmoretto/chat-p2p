@@ -11,6 +11,7 @@ import { makeRoomChatKey, roomChatCipher } from '../shared/room-chat.mjs';
 import { createApplication } from '../server/index.mjs';
 import { selectHost } from '../server/rooms.mjs';
 import { openDatabase } from '../server/storage.mjs';
+import { FileTransfer, MAX_FILE_BYTES } from '../src/file-transfer.mjs';
 import { changeEncryptedGroup, encryptMessage, joinEncryptedGroup, makeKeyPackage,
   readEncryptedEvent, startGroup, wipeConsumed } from '../src/mls.mjs';
 
@@ -79,6 +80,42 @@ test('MLS entrega a um membro e revoga leitura mesmo com o commit e o ciphertext
   const next = { group, epoch: 2, kind: 'message', author: alice.id, id: randomUUID() };
   await encryptMessage(a, next, { author: alice.id, id: next.id, text: 'após remoção', created: 2 });
   await assert.rejects(() => readEncryptedEvent(b, next));
+});
+
+test('arquivos exigem aceite, limitam o tamanho e rejeitam transferência incompleta', () => {
+  let state;
+  const sent = [];
+  const channel = Object.assign(new EventTarget(), { readyState: 'open', send: (frame) => sent.push(JSON.parse(frame)) });
+  const files = new FileTransfer((value) => { state = value; });
+  const id = randomUUID();
+  const offer = { kind: 'offer', id, name: 'pasta/relatorio.txt', size: 32_000 };
+  const deliver = (data) => channel.dispatchEvent(new MessageEvent('message', { data }));
+  try {
+    files.bind(channel);
+    deliver(JSON.stringify({ ...offer, size: MAX_FILE_BYTES + 1 }));
+    assert.equal(sent.at(-1).kind, 'decline');
+    assert.equal(state.transfer, undefined);
+
+    deliver(JSON.stringify(offer));
+    assert.equal(state.transfer.phase, 'incoming');
+    assert.equal(state.transfer.name, 'pasta_relatorio.txt');
+    deliver(new ArrayBuffer(16 * 1024));
+    assert.equal(state.transfer.bytes, 0);
+    files.accept();
+    assert.equal(sent.at(-1).kind, 'accept');
+    deliver(new ArrayBuffer(16 * 1024));
+    deliver(JSON.stringify({ kind: 'done', id }));
+    assert.equal(sent.at(-1).kind, 'cancel');
+    assert.equal(state.transfer.phase, 'invalid');
+    assert.equal(files.download, undefined);
+
+    deliver(JSON.stringify(offer));
+    files.accept();
+    deliver(new ArrayBuffer(1));
+    assert.equal(state.transfer.phase, 'invalid');
+  } finally {
+    files.close();
+  }
 });
 
 test('eleição usa estabilidade e qualidade, com desempate determinístico', () => {

@@ -3,6 +3,7 @@ import { Bell, LockKeyhole, MailPlus, PhoneIncoming, ShieldCheck, UserRoundPlus 
 import { decryptMessage, sendMessage } from './inbox.mjs';
 import { request } from './local.mjs';
 import { Conversation } from './views.jsx';
+import { useFileShare } from './FileShare.jsx';
 
 export function Inbox({ id, contact, label = contact ? 'Conversa individual' : 'Chat do grupo', session, report, unlock, onRead }) {
   const [messages, setMessages] = useState([]);
@@ -15,6 +16,7 @@ export function Inbox({ id, contact, label = contact ? 'Conversa individual' : '
   const read = useRef(0);
   const wake = useRef(null);
   const key = session.chatKey;
+  const files = useFileShare(contact && key ? id : null, session);
   const path = 'groups/' + id + '/';
 
   useEffect(() => {
@@ -110,6 +112,7 @@ export function Inbox({ id, contact, label = contact ? 'Conversa individual' : '
     <Conversation messages={messages} roster={people ?? []} label={label}
       empty={!people ? 'Carregando conversa…' : 'Envie a primeira mensagem.'}
       self={session.account.id} busy={sending} available={ready} onSend={send}
+      attachment={files.attachment} after={files.panel}
       before={older && <div className="thread-older"><button className="quiet" disabled={loadingOlder}
         onClick={loadOlder}>{loadingOlder ? 'Carregando…' : 'Mensagens anteriores'}</button></div>} />
   </>;
