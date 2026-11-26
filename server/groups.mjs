@@ -246,7 +246,7 @@ export function groupService(db, hash, onRevoke) {
     createRoom(groupId, accountId, { name, mode }) {
       const { group } = check(groupId, accountId);
       requireValue(group.chat_mode !== 'contact', 404, 'Grupo indisponível.');
-      requireValue(shortName(name) && ['meet','live'].includes(mode), 400, 'Informe o nome e o tipo da sala.');
+      requireValue(shortName(name) && ['meet','live','text','voice'].includes(mode), 400, 'Informe o nome e o tipo da sala.');
       const id = randomUUID();
       db.prepare('INSERT INTO rooms (id,group_id,creator,name,mode,created) VALUES (?,?,?,?,?,?)')
         .run(id, groupId, accountId, name.trim(), mode, Date.now());

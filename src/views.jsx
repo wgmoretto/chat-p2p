@@ -1,6 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Link2, LockKeyhole, MessageSquare, Monitor, MonitorUp, Moon, Send, ShieldCheck, Sun, UserPlus, Users, Video, X } from 'lucide-react';
+import { ArrowRight, Hash, Link2, LockKeyhole, MessageSquare, Monitor, MonitorUp, Moon, Radio, Send, ShieldCheck, Sun, UserPlus, Users, Video, Volume2, X } from 'lucide-react';
 import { login, register } from './workspace.mjs';
+
+export const roomTypes = {
+  text: { label: 'Chat de texto', icon: Hash },
+  voice: { label: 'Chat de voz', icon: Volume2 },
+  meet: { label: 'Reunião', icon: Video },
+  live: { label: 'Live', icon: Radio },
+};
 
 export function Brand() {
   return <div className="brand">

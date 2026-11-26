@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Bell, LogOut, Menu, Plus, Radio, Search, UserPlus, Users, Video, X } from 'lucide-react';
-import { Brand, initials } from './views.jsx';
+import { Bell, LogOut, Menu, Plus, Search, UserPlus, Users, X } from 'lucide-react';
+import { Brand, initials, roomTypes } from './views.jsx';
 
 function Count({ value, label }) {
   return value > 0 && <><span className="nav-count" aria-hidden="true" title={String(value)}>{value > 99 ? '99+' : value}</span>
@@ -12,7 +12,7 @@ export function Presence({ person }) {
   return <span className="presence" data-online={person.online || person.calling}><i aria-hidden="true" />{status}</span>;
 }
 
-export function WorkspaceRail({ groups, friends, group, groupRooms, room, contact, canJoin, notice,
+export function WorkspaceRail({ groups, friends, group, groupRooms, room, roomUnread, contact, canJoin, notice,
   showActivity, openContact, select, enter, create, logout, session, appearance, ready }) {
   const [expanded, setExpanded] = useState(false);
   const [search, setSearch] = useState('');
@@ -71,11 +71,16 @@ export function WorkspaceRail({ groups, friends, group, groupRooms, room, contac
           <div className="nav-heading"><h2>Salas</h2>
             <button className="icon" aria-label="Nova sala" disabled={!canJoin} onClick={() => navigate(() => create('room'))}><Plus size={19} /></button>
           </div>
-          <ul>{groupRooms.map((item) => <li key={item.id}>
-            <button className="nav-item" aria-current={item.id === room?.id ? 'page' : undefined} disabled={!canJoin}
-              onClick={() => navigate(() => enter(item))}>{item.mode === 'live' ? <Radio size={17} /> : <Video size={17} />}
-              <span>{item.name}</span></button>
-          </li>)}</ul>
+          <ul>{groupRooms.map((item) => {
+            const { icon: Icon, label } = roomTypes[item.mode];
+            return <li key={item.id}>
+              <button className="nav-item" aria-current={item.id === room?.id ? 'page' : undefined} disabled={!canJoin}
+                title={label} onClick={() => navigate(() => enter(item))}>
+                <Icon size={17} aria-hidden="true" /><span className="nav-item-name">{item.name}</span>
+                <Count value={roomUnread[item.id]} label="mensagens não lidas" />
+              </button>
+            </li>;
+          })}</ul>
         </section>}
       </nav>
       <div className="sidebar-footer">

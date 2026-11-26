@@ -196,8 +196,9 @@ export function createApplication(options = {}) {
       const now = Date.now();
       for (const [id, until] of onlineUntil) if (until <= now) onlineUntil.delete(id);
       onlineUntil.set(account.id, now + 15_000);
-      const unread = chat.unread(account.id);
+      const { threads: unread, rooms: roomUnread } = chat.unread(account.id);
       return {
+        roomUnread,
         friends: friends.list(account.id).map((friend) => ({
           ...friend, online: Boolean(friend.roomId && onlineUntil.has(friend.id)), unread: unread[friend.roomId] ?? 0,
         })),

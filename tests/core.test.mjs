@@ -209,9 +209,34 @@ test('convite de amigo exige destinatário e o histórico cifrado mantém pagina
   await call(root + 'read', { seq }, bob.cookie);
   await call(root + 'read', { seq: start.seq }, bob.cookie);
   assert.equal((await workspace(bob.cookie)).groups[0].unread, 0);
+
+  const create = (name, mode) => call(root + 'rooms', { name, mode }, alice.cookie);
+  assert.equal((await create('Inválida', 'other')).status, 400);
+  const textRoom = await (await create('Avisos', 'text')).json();
+  const voice = await (await create('Papo', 'voice')).json();
+  assert.equal(voice.mode, 'voice');
+  const textRoot = 'groups/' + textRoom.id + '/';
+  assert.equal((await call(textRoot + 'messages', undefined, carol.cookie)).status, 404);
+  assert.equal((await call('groups/' + voice.id + '/messages', undefined, bob.cookie)).status, 404);
+  assert.equal((await call(textRoot + 'messages', initial, alice.cookie)).status, 409);
+  const textMessage = { ...initial, id: randomUUID() };
+  const saved = await (await call(textRoot + 'messages', textMessage, alice.cookie)).json();
+  await call(root + 'messages', { ...initial, id: randomUUID() }, alice.cookie);
+  const onlyText = await (await call(textRoot + 'messages', undefined, bob.cookie)).json();
+  assert.deepEqual(onlyText.messages.map(({ id }) => id), [textMessage.id]);
+  const groupMessages = await (await call(root + 'messages?after=' + seq, undefined, bob.cookie)).json();
+  assert.equal(groupMessages.messages.length, 1);
+  assert.notEqual(groupMessages.messages[0].id, textMessage.id);
+  const unreadRooms = await workspace(bob.cookie);
+  assert.equal(unreadRooms.groups[0].unread, 2);
+  assert.equal(unreadRooms.roomUnread[textRoom.id], 1);
+  await call(textRoot + 'read', { seq: saved.seq }, bob.cookie);
+  const afterRoomRead = await workspace(bob.cookie);
+  assert.equal(afterRoomRead.groups[0].unread, 1);
+  assert.deepEqual(afterRoomRead.roomUnread, {});
 });
 
-test('migração mantém os grupos e eventos do SQLite anterior', () => {
+test('migração mantém os grupos, salas e referências do SQLite anterior', () => {
   const directory = mkdtempSync(join(tmpdir(), 'chat-p2p-upgrade-'));
   const path = join(directory, 'chat.sqlite');
   let db = new DatabaseSync(path);
@@ -224,15 +249,33 @@ test('migração mantém os grupos e eventos do SQLite anterior', () => {
       CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,
         group_id TEXT NOT NULL REFERENCES groups(id),author TEXT NOT NULL REFERENCES accounts(id),
         epoch INTEGER NOT NULL,payload TEXT NOT NULL);
+      CREATE TABLE rooms (id TEXT PRIMARY KEY,group_id TEXT NOT NULL REFERENCES groups(id),creator TEXT NOT NULL REFERENCES accounts(id),
+        name TEXT NOT NULL,mode TEXT NOT NULL CHECK(mode IN ('meet','live')),created INTEGER NOT NULL);
+      CREATE TABLE friendships (first TEXT NOT NULL REFERENCES accounts(id),second TEXT NOT NULL REFERENCES accounts(id),
+        requester TEXT NOT NULL REFERENCES accounts(id),room TEXT UNIQUE REFERENCES rooms(id),PRIMARY KEY(first,second));
+      CREATE TABLE actions (id INTEGER PRIMARY KEY,room TEXT NOT NULL REFERENCES rooms(id),
+        actor TEXT NOT NULL REFERENCES accounts(id),target TEXT NOT NULL REFERENCES accounts(id),action TEXT NOT NULL,created INTEGER NOT NULL);
       INSERT INTO accounts VALUES ('owner','admin','Admin','test-password-hash','test-signed-identity');
+      INSERT INTO accounts VALUES ('other','other','Other','hash','signing');
       INSERT INTO groups VALUES ('legacy','Equipe','owner',3);
       INSERT INTO events (id,group_id,author,epoch,payload) VALUES ('old','legacy','owner',3,'old-ciphertext');
+      INSERT INTO rooms VALUES ('old-room','legacy','owner','Antiga','meet',0);
+      INSERT INTO friendships VALUES ('other','owner','owner','old-room');
+      INSERT INTO actions VALUES (1,'old-room','owner','other','mute',0);
     `);
     db.close();
     db = openDatabase(path);
     const before = db.prepare('SELECT id,name,epoch,chat_mode FROM groups').get();
     assert.deepEqual({ ...before }, { id: 'legacy', name: 'Equipe', epoch: 3, chat_mode: 'mls' });
     assert.equal(db.prepare('SELECT payload FROM events').get().payload, 'old-ciphertext');
+    assert.equal(db.prepare("SELECT mode FROM rooms WHERE id='old-room'").get().mode, 'meet');
+    assert.equal(db.prepare('SELECT room FROM friendships').get().room, 'old-room');
+    assert.equal(db.prepare('SELECT room FROM actions').get().room, 'old-room');
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+    db.exec("INSERT INTO rooms VALUES ('new-room','legacy','owner','Avisos','text',0)");
+    db.close();
+    db = openDatabase(path);
+    assert.equal(db.prepare("SELECT mode FROM rooms WHERE id='new-room'").get().mode, 'text');
   } finally {
     if (db.isOpen) db.close();
     for (const file of [path, path + '-wal', path + '-shm']) rmSync(file, { force: true });

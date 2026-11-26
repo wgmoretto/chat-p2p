@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { encoded, idPattern } from './groups.mjs';
 
 const OPEN = WebSocket.OPEN;
-const limits = { meet: 4, live: 5 };
+const limits = { meet: 4, live: 5, voice: 4 };
 const HEARTBEAT_MS = 4_000;
 const HOST_TIMEOUT = 12_000;
 
@@ -71,7 +71,7 @@ export function attachRooms(server, db, config) {
       send(target, { type: 'chat', ...envelope, counter, iv, content });
     } else if (message.type === 'media') {
       send(target, { type: 'media', ...envelope, mic: message.mic === true,
-        camera: message.camera === true, screen: message.screen === true });
+        camera: room.mode !== 'voice' && message.camera === true, screen: room.mode !== 'voice' && message.screen === true });
     } else {
       const candidate = message.candidate;
       if (!candidate || typeof candidate.candidate !== 'string' || candidate.candidate.length > 3_000) return;
@@ -115,6 +115,7 @@ export function attachRooms(server, db, config) {
     let message;
     try { message = JSON.parse(raw.toString()); } catch { return; }
     if (!message || typeof message !== 'object') return;
+    if (room.mode === 'voice' && message.type === 'chat') return;
     switch (message.type) {
       case 'sdp':
       case 'ice':
@@ -182,7 +183,7 @@ export function attachRooms(server, db, config) {
       ws.on('error', () => {});
       const profile = roomLookup.get(id);
       const membership = profile && config.member.get(profile.group_id, account.id);
-      if (!profile || membership?.status !== 'active' || (profile.chat_mode === 'mls' && signing !== account.signing)) {
+      if (!profile || profile.mode === 'text' || membership?.status !== 'active' || (profile.chat_mode === 'mls' && signing !== account.signing)) {
         ws.close(4003, 'Sala indisponível.');
         return;
       }

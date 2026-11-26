@@ -1,20 +1,20 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { AudioLines, Camera, CameraOff, Crown, Maximize, MessageSquare, Mic, MicOff, Minimize, MonitorUp, PhoneOff, Radio, ScreenShareOff, Users, Video, X } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { AudioLines, Camera, CameraOff, Crown, HeadphoneOff, Headphones, Maximize, MessageSquare, Mic, MicOff, Minimize, MonitorUp, PhoneOff, Radio, ScreenShareOff, Users, Volume2, Video, X } from 'lucide-react';
 import { RoomConnection, videoProfiles } from './room.mjs';
-import { request } from './local.mjs';
+import { readPreference, request, writePreference } from './local.mjs';
 import { Conversation, initials } from './views.jsx';
 
-function Media({ stream, muted, audio = false, label, onResolution }) {
+function Media({ stream, muted, audio = false, volume = 1, label, onResolution }) {
   const ref = useRef(null);
   useEffect(() => {
-    if (!ref.current) return;
-    ref.current.srcObject = stream;
-    const video = ref.current;
-    void video.play().catch(() => {});
-    return () => { video.srcObject = null; };
+    const player = ref.current;
+    player.srcObject = stream;
+    return () => { player.srcObject = null; };
   }, [stream]);
+  useEffect(() => { void ref.current.play().catch(() => {}); }, [stream, muted]);
+  useLayoutEffect(() => { if (audio && ref.current) ref.current.volume = volume; }, [audio, volume]);
   return audio
-    ? <audio ref={ref} autoPlay aria-label={label} />
+    ? <audio ref={ref} autoPlay muted={muted} aria-label={label} />
     : <video ref={ref} autoPlay playsInline muted={muted} aria-label={label}
       onResize={onResolution} onLoadedMetadata={onResolution} />;
 }
@@ -90,7 +90,7 @@ function Tile({ person, host }) {
   </div>;
 }
 
-function RoomPeople({ state, session, connection, report }) {
+function RoomPeople({ state, session, connection, report, listen, setVolume, volumeFor }) {
   const self = state.people.find(({ self }) => self);
   const role = self?.role ?? 'member';
   const action = (type, person) => {
@@ -103,14 +103,25 @@ function RoomPeople({ state, session, connection, report }) {
       <span className="avatar" aria-hidden="true">{initials(person.name)}</span>
       <span className="person-label"><strong>{person.name}</strong>
         <small>{person.id === state.host ? 'Host da sessão' : person.role === 'moderator' ? 'Moderador' : 'Participante'}
-          {person.muted ? ' · Silenciado' : ''}{person.videoBlocked ? ' · Vídeo bloqueado' : ''}</small></span>
+          {person.self ? ' · Você' : ''}{person.muted ? ' · Silenciado' : setVolume ? person.media.mic ? ' · Microfone ligado' : ' · Microfone desligado' : ''}
+          {!setVolume && person.videoBlocked ? ' · Vídeo bloqueado' : ''}</small></span>
+      {setVolume && !person.self && <div className="person-volume">
+        {person.media.mic && <Media audio stream={person.media.mic} label={'Áudio de ' + person.name}
+          muted={!listen} volume={volumeFor(person.id) / 100} />}
+        <label><Volume2 size={16} aria-hidden="true" />
+          <input type="range" min="0" max="100" step="5" value={volumeFor(person.id)}
+            aria-label={'Volume de ' + person.name} aria-valuetext={volumeFor(person.id) + '%'}
+            onChange={(event) => setVolume(person.id, Number(event.currentTarget.value))} />
+          <span aria-hidden="true">{volumeFor(person.id)}%</span>
+        </label>
+      </div>}
       {!person.self && (role === 'owner' || role === 'moderator' && person.role === 'member' || state.host === session.account.id) &&
         <select aria-label={'Ações para ' + person.name} value="" onChange={(event) => action(event.target.value, person)}>
           <option value="">Ações</option>
           {state.host === session.account.id && <option value="host.transfer">Transferir host</option>}
           {(role === 'owner' || role === 'moderator' && person.role === 'member') && <>
             <option value={person.muted ? 'unmute' : 'mute'}>{person.muted ? 'Liberar microfone' : 'Silenciar'}</option>
-            <option value={person.videoBlocked ? 'allowVideo' : 'blockVideo'}>{person.videoBlocked ? 'Liberar vídeo' : 'Bloquear vídeo'}</option>
+            {!setVolume && <option value={person.videoBlocked ? 'allowVideo' : 'blockVideo'}>{person.videoBlocked ? 'Liberar vídeo' : 'Bloquear vídeo'}</option>}
             <option value="kick">Remover da sessão</option>
           </>}
         </select>}
@@ -129,7 +140,10 @@ export function Meeting({ room, group, session, verified, leave, report, createL
   const [sending, setSending] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [changingQuality, setChangingQuality] = useState(false);
+  const [listen, setListen] = useState(true);
+  const [volumes, setVolumes] = useState({});
   const isLive = room.mode === 'live';
+  const isVoice = room.mode === 'voice';
   useEffect(() => {
     const connection = new RoomConnection(room, group, session, roster.current, setState, report);
     runtime.current = connection;
@@ -149,7 +163,7 @@ export function Meeting({ room, group, session, verified, leave, report, createL
     setCapturing(true);
     try { await runtime.current.toggle(kind); }
     catch (problem) {
-      if (problem.name === 'NotAllowedError') report(Error('Captura cancelada ou bloqueada pelo navegador.'));
+      if (problem.name === 'NotAllowedError') report(Error(kind === 'mic' ? 'O navegador bloqueou o acesso ao microfone.' : 'Captura cancelada ou bloqueada pelo navegador.'));
       else report(problem);
     } finally { setCapturing(false); }
   }
@@ -159,6 +173,37 @@ export function Meeting({ room, group, session, verified, leave, report, createL
     try { await runtime.current.setQuality(Number(event.target.value)); }
     catch (problem) { report(problem); }
     finally { setChangingQuality(false); }
+  }
+
+  const microphone = <button aria-pressed={Boolean(self?.media.mic)} disabled={!canCapture || state.policy.muted} onClick={() => toggle('mic')}>
+    {self?.media.mic ? <Mic size={19} /> : <MicOff size={19} />} Microfone</button>;
+
+  if (isVoice) {
+    const volumeKey = (id) => 'voice-volume/' + session.account.id + '/' + id;
+    const volumeFor = (id) => {
+      const value = volumes[id] ?? Number(readPreference(volumeKey(id), '100'));
+      return Number.isFinite(value) && value >= 0 && value <= 100 ? value : 100;
+    };
+    return <section className="voice-room" aria-label="Sala de voz">
+      <div className="voice-summary">
+        <span className="room-symbol"><Volume2 size={22} aria-hidden="true" /></span>
+        <div><strong>Áudio da sala</strong><p role="status">{state.media}</p></div>
+      </div>
+      {state.mediaFailed && <p className="media-notice" role="status">
+        {state.hasTurn ? 'A conexão de voz falhou.' : 'A conexão direta falhou e o servidor não tem TURN configurado.'}
+      </p>}
+      <RoomPeople state={state} session={session} connection={runtime.current} report={report} listen={listen}
+        volumeFor={volumeFor} setVolume={(id, volume) => {
+          setVolumes((current) => ({ ...current, [id]: volume }));
+          writePreference(volumeKey(id), String(volume));
+        }} />
+      <div className="meeting-controls" aria-label="Controles de áudio">
+        {microphone}
+        <button aria-pressed={listen} title={listen ? 'Silenciar áudio recebido' : 'Ativar áudio recebido'}
+          onClick={() => setListen(!listen)}>{listen ? <Headphones size={19} /> : <HeadphoneOff size={19} />} Fone</button>
+        <button className="danger" onClick={leave}><PhoneOff size={19} /> Sair da sala</button>
+      </div>
+    </section>;
   }
 
   return <div className={'meeting' + (panelOpen ? '' : ' panel-hidden')}>
@@ -187,8 +232,7 @@ export function Meeting({ room, group, session, verified, leave, report, createL
         {state.canChat && ' O chat segue disponível.'}
       </p>}
       <div className="meeting-controls" aria-label="Controles de mídia">
-        <button aria-pressed={Boolean(self?.media.mic)} disabled={!canCapture || state.policy.muted} onClick={() => toggle('mic')}>
-          {self?.media.mic ? <Mic size={19} /> : <MicOff size={19} />} Microfone</button>
+        {microphone}
         <button aria-pressed={Boolean(self?.media.camera)} disabled={!canCapture || state.policy.videoBlocked} onClick={() => toggle('camera')}>
           {self?.media.camera ? <Camera size={19} /> : <CameraOff size={19} />} Câmera</button>
         <button aria-pressed={Boolean(self?.media.screen)} disabled={!canCapture || state.policy.videoBlocked} onClick={() => toggle('screen')}>

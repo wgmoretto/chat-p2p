@@ -42,6 +42,7 @@ const blockedIce = process.env.TEST_ICE_BLOCKED === '1';
 const mediaPath = process.env.FORCE_TURN === '1' ? 'Relay TURN' : 'Direta';
 
 test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ browser }, testInfo) => {
+  test.setTimeout(120_000);
   const contexts = await Promise.all(Array.from({ length: 4 }, () => browser.newContext()));
   try {
     if (blockedIce) await Promise.all(contexts.map((context) => context.addInitScript(() => {
@@ -195,6 +196,72 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await bob.screenshot({ path: testInfo.outputPath('grupo-desktop.png') });
     await expect(bobGroup.locator('.nav-count')).toHaveCount(0);
     await invite(alice, carol, 'moderator');
+    await newRoom(alice, 'Avisos', 'text');
+    await expect(navRoom(alice, 'Avisos')).toHaveAttribute('title', 'Chat de texto');
+    await expect(alice.getByRole('button', { name: 'Microfone' })).toHaveCount(0);
+    await send(alice, 'Mensagem exclusiva do canal de avisos.');
+    await expect(bob.getByText('Mensagem exclusiva do canal de avisos.')).toHaveCount(0);
+    await expect(bobGroup.locator('.nav-count')).toHaveText('1');
+    const unreadRoom = bob.getByRole('navigation').getByRole('button', { name: /^Avisos/ });
+    await expect(unreadRoom.locator('.nav-count')).toHaveText('1');
+    await unreadRoom.click();
+    await expect(bob.getByRole('log').getByText('Mensagem exclusiva do canal de avisos.')).toBeVisible();
+    await expect(unreadRoom.locator('.nav-count')).toHaveCount(0);
+    await expect(bobGroup.locator('.nav-count')).toHaveCount(0);
+    await expect(bob.getByText('Mensagem persistente do grupo.')).toHaveCount(0);
+    await bob.screenshot({ path: testInfo.outputPath('sala-texto.png') });
+
+    await newRoom(alice, 'Conversas', 'voice');
+    await expect(navRoom(alice, 'Conversas')).toHaveAttribute('title', 'Chat de voz');
+    await navRoom(bob, 'Conversas').click();
+    if (!blockedIce) {
+      await navRoom(carol, 'Conversas').click();
+      await expect(alice.getByText(mediaPath, { exact: true })).toBeVisible({ timeout: 18_000 });
+    }
+    const microphone = (page) => page.getByRole('button', { name: 'Microfone', exact: true });
+    const headphone = alice.getByRole('button', { name: 'Fone', exact: true });
+    await expect(microphone(bob)).toHaveAttribute('aria-pressed', 'false');
+    await expect(alice.getByRole('button', { name: 'Câmera', exact: true })).toHaveCount(0);
+    await expect(alice.getByLabel('Mensagem', { exact: true })).toHaveCount(0);
+    await microphone(bob).click();
+    await expect(microphone(bob)).toHaveAttribute('aria-pressed', 'true');
+    const volume = alice.getByRole('slider', { name: 'Volume de Rafael' });
+    await expect(volume).toHaveValue('100');
+    await volume.press('Home');
+    await volume.press('ArrowRight');
+    await expect(volume).toHaveValue('5');
+    await headphone.click();
+    await expect(headphone).toHaveAttribute('aria-pressed', 'false');
+    await expect(microphone(bob)).toHaveAttribute('aria-pressed', 'true');
+    if (!blockedIce) {
+      const audio = (page) => page.locator('audio[aria-label="Áudio de Rafael"]');
+      await expect(audio(alice)).toHaveJSProperty('volume', 0.05);
+      await expect(audio(alice)).toHaveJSProperty('muted', true);
+      await expect(audio(carol)).toHaveJSProperty('volume', 1);
+      await expect(audio(carol)).toHaveJSProperty('muted', false);
+      await expect.poll(() => audio(carol).evaluate((player) => player.srcObject?.getAudioTracks().length)).toBe(1);
+      await headphone.click();
+      await expect(audio(alice)).toHaveJSProperty('muted', false);
+      await expect(audio(alice)).toHaveJSProperty('volume', 0.05);
+    }
+    await alice.screenshot({ path: testInfo.outputPath('sala-voz-desktop.png') });
+    await alice.getByLabel('Tema').selectOption('dark');
+    await alice.setViewportSize({ width: 390, height: 844 });
+    expect(await alice.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await expect(headphone).toBeInViewport();
+    await alice.screenshot({ path: testInfo.outputPath('sala-voz-mobile.png') });
+    await alice.setViewportSize({ width: 1440, height: 900 });
+    await alice.getByLabel('Tema').selectOption('light');
+    await microphone(bob).click();
+    await expect(microphone(bob)).toHaveAttribute('aria-pressed', 'false');
+    await expect(alice.locator('audio')).toHaveCount(0);
+    await alice.getByRole('button', { name: 'Sair da sala' }).click();
+    await navRoom(alice, 'Conversas').click();
+    await expect(alice.getByRole('slider', { name: 'Volume de Rafael' })).toHaveValue('5');
+    await alice.getByRole('button', { name: 'Sair da sala' }).click();
+    await bob.getByRole('button', { name: 'Sair da sala' }).click();
+    if (!blockedIce) await carol.getByRole('button', { name: 'Sair da sala' }).click();
+
     await newRoom(alice, 'Reunião semanal', 'meet');
     await alice.getByRole('button', { name: 'Sair da sala' }).click();
     await alice.getByRole('button', { name: /^Salas/ }).last().click();

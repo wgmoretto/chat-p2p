@@ -4,7 +4,7 @@ import { decryptMessage, sendMessage } from './inbox.mjs';
 import { request } from './local.mjs';
 import { Conversation } from './views.jsx';
 
-export function Inbox({ id, contact, session, report, unlock, onRead }) {
+export function Inbox({ id, contact, label = contact ? 'Conversa individual' : 'Chat do grupo', session, report, unlock, onRead }) {
   const [messages, setMessages] = useState([]);
   const [people, setPeople] = useState(null);
   const [older, setOlder] = useState(false);
@@ -107,7 +107,7 @@ export function Inbox({ id, contact, session, report, unlock, onRead }) {
       {disconnected ? 'Recuperando a conexão…' : contact && missing ? 'Aguardando seu amigo entrar na versão atualizada.'
         : !contact && missing ? 'Alguns membros ainda precisam entrar na versão atualizada para receber mensagens.'
           : 'Mensagens cifradas'}</div>
-    <Conversation messages={messages} roster={people ?? []} label={contact ? 'Conversa individual' : 'Chat do grupo'}
+    <Conversation messages={messages} roster={people ?? []} label={label}
       empty={!people ? 'Carregando conversa…' : 'Envie a primeira mensagem.'}
       self={session.account.id} busy={sending} available={ready} onSend={send}
       before={older && <div className="thread-older"><button className="quiet" disabled={loadingOlder}

@@ -2,6 +2,9 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+const roomColumns = `id TEXT PRIMARY KEY, group_id TEXT NOT NULL REFERENCES groups(id), creator TEXT NOT NULL REFERENCES accounts(id),
+  name TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('meet', 'live', 'text', 'voice')), created INTEGER NOT NULL`;
+
 export function openDatabase(path) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
@@ -37,8 +40,7 @@ export function openDatabase(path) {
     );
     CREATE INDEX IF NOT EXISTS events_by_group ON events(group_id, seq);
     CREATE TABLE IF NOT EXISTS rooms (
-      id TEXT PRIMARY KEY, group_id TEXT NOT NULL REFERENCES groups(id), creator TEXT NOT NULL REFERENCES accounts(id),
-      name TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('meet', 'live')), created INTEGER NOT NULL
+      ${roomColumns}
     );
     CREATE INDEX IF NOT EXISTS rooms_by_group ON rooms(group_id, created);
     CREATE TABLE IF NOT EXISTS friendships (
@@ -81,6 +83,38 @@ export function openDatabase(path) {
   if (!db.prepare("SELECT 1 FROM pragma_table_info('groups') WHERE name='chat_mode'").get()) {
     db.exec("ALTER TABLE groups ADD COLUMN chat_mode TEXT NOT NULL DEFAULT 'mls' CHECK (chat_mode IN ('mls', 'session', 'contact'))");
   }
+  if (!db.prepare("SELECT sql FROM sqlite_schema WHERE name='rooms'").get().sql.includes("'voice'")) {
+    // Rebuild the CHECK constraint while retaining the room IDs referenced by friendships and actions.
+    db.exec('PRAGMA foreign_keys=OFF');
+    try {
+      transaction(db, () => {
+        if (db.prepare("SELECT sql FROM sqlite_schema WHERE name='rooms'").get().sql.includes("'voice'")) return;
+        db.exec(`
+          CREATE TABLE rooms_next (${roomColumns});
+          INSERT INTO rooms_next (id,group_id,creator,name,mode,created)
+            SELECT id,group_id,creator,name,mode,created FROM rooms;
+          DROP TABLE rooms;
+          ALTER TABLE rooms_next RENAME TO rooms;
+          CREATE INDEX rooms_by_group ON rooms(group_id, created);
+        `);
+        if (db.prepare('PRAGMA foreign_key_check').get()) throw Error('Room migration failed foreign-key validation.');
+      });
+    } finally {
+      db.exec('PRAGMA foreign_keys=ON');
+    }
+  }
+  transaction(db, () => {
+    if (!db.prepare("SELECT 1 FROM pragma_table_info('chat_messages') WHERE name='room_id'").get()) {
+      db.exec('ALTER TABLE chat_messages ADD COLUMN room_id TEXT REFERENCES rooms(id)');
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS chat_by_room ON chat_messages(room_id,seq) WHERE room_id IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS room_reads (
+        room_id TEXT NOT NULL REFERENCES rooms(id), account TEXT NOT NULL REFERENCES accounts(id),
+        seq INTEGER NOT NULL, PRIMARY KEY (room_id, account)
+      );
+    `);
+  });
   return db;
 }
 

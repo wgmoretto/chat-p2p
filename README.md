@@ -1,6 +1,6 @@
 # Chat P2P
 
-Piloto open source de chat interno, reuniões, compartilhamento de tela, lives e moderação. O servidor coordena login, amizades, sinalização e sucessão de host. Os navegadores trocam áudio e vídeo por WebRTC, diretamente ou pelo coturn. O chat da sala continua disponível pela conexão com o servidor se o canal WebRTC falhar.
+Piloto open source de chat interno, reuniões, compartilhamento de tela, lives e moderação. O servidor coordena login, amizades, sinalização e sucessão de host. Os navegadores trocam áudio e vídeo por WebRTC, diretamente ou pelo coturn. Em reuniões e lives, o chat da sessão continua disponível pela conexão com o servidor se o canal WebRTC falhar.
 
 ## Rodar no Windows
 
@@ -18,7 +18,7 @@ npm.cmd start
 1. Abra [http://localhost:3000](http://localhost:3000). Crie a primeira conta com o código de instalação. A senha precisa ter ao menos 12 caracteres.
 2. Após a configuração inicial, cada pessoa pode criar uma conta com usuário e senha. A mesma conta pode entrar em outro perfil ou dispositivo.
 3. Na lista **Amigos**, use **Adicionar amigo** e informe o `@usuário`. O pedido aparece em **Atividade**. Após o aceite, clique no contato para abrir o histórico. Use **Ligar** para iniciar uma chamada.
-4. Para mais pessoas, crie um grupo privado e use **Convidar** para selecionar um amigo. Ele pode aceitar em **Atividade**. O **Chat do grupo** guarda mensagens cifradas, e **Salas** abre reuniões e lives. Use **Pessoas** para gerenciar membros. Donos e moderadores podem renomear salas; o nome muda para todos sem encerrar a chamada.
+4. Para mais pessoas, crie um grupo privado e use **Convidar** para selecionar um amigo. Ele pode aceitar em **Atividade**. O **Chat do grupo** guarda mensagens cifradas, e **Nova sala** permite criar chats de texto, chats de voz, reuniões e lives. Use **Pessoas** para gerenciar membros. Donos e moderadores podem renomear salas; o nome muda para todos sem encerrar a chamada.
 5. Na reunião, use **Microfone**, **Câmera** e **Compartilhar tela** para publicar. O botão de maximizar em cada vídeo abre uma visualização que preserva a proporção e mostra a resolução recebida. Use **Qualidade de envio** para escolher a resolução desejada de câmera e tela. Em uma live, o transmissor controla a qualidade.
 6. No menu da conta, escolha **Sistema**, **Claro** ou **Escuro**. O tema e a qualidade de envio são lembrados pelo navegador.
 
@@ -60,7 +60,7 @@ No Compose do coturn, em **Environment**, ative **Create .env file** e preencha 
 
 ## Atualizar uma instalação existente
 
-Faça o redeploy a partir da `main` preservando o volume `chat-data`. Entre com o usuário e a senha que você já usa. As tabelas novas são criadas na inicialização. Contas e grupos existentes são preservados. Sessões abertas antes da atualização podem pedir a senha uma vez para habilitar o histórico. As chaves dos grupos MLS antigos ficam no perfil e no endereço usados antes da atualização. Use esse navegador para abrir as salas e ler o histórico desses grupos.
+Antes do redeploy, faça um backup do SQLite. Atualize a partir da `main` preservando o volume `chat-data`. Entre com o usuário e a senha que você já usa. O banco é atualizado na inicialização. Se precisar voltar para uma versão anterior a salas de texto e voz, use o backup do banco feito antes da atualização. Contas e grupos existentes são preservados. Sessões abertas antes da atualização podem pedir a senha uma vez para habilitar o histórico. As chaves dos grupos MLS antigos ficam no perfil e no endereço usados antes da atualização. Use esse navegador para abrir as salas e ler o histórico desses grupos.
 
 O código de instalação continua reservado à criação da primeira conta em um banco vazio. As contas seguintes podem se cadastrar e enviar pedidos sem um convite de grupo. Pedidos dependem de aceite e grupos seguem privados.
 
@@ -68,6 +68,8 @@ O código de instalação continua reservado à criação da primeira conta em u
 
 - **Amizades** por `@usuário`, com pedido e aceite. Cada dupla tem uma conversa privada com histórico, presença e contador de não lidas. A chamada com áudio, câmera e tela é aberta pelo botão **Ligar**.
 - **Grupos privados** com até 32 membros e convites de uso único. Convites para amigos chegam em **Atividade**. As mensagens dos grupos usam histórico e contador de não lidas. Grupos MLS existentes mantêm seu próprio histórico e suas chaves locais.
+- **Salas de texto** têm histórico cifrado próprio, disponível mesmo quando o grupo está offline. Novas mensagens aparecem no contador da sala e do grupo.
+- **Salas de voz** recebem até quatro pessoas e usam WebRTC. Entre com o microfone desligado e use **Microfone** para falar e **Fone** para silenciar ou retomar o áudio recebido. Em **Pessoas na sala**, ajuste o volume de cada participante. O volume fica salvo neste navegador para a sua conta.
 - **Reuniões** com até quatro pessoas. Microfone, câmera e tela usam conexões WebRTC independentes do host da sessão. O chat da sala dura a sessão e prioriza o canal de dados WebRTC. Se esse canal estiver indisponível, o servidor encaminha somente mensagens cifradas.
 - **Lives** de um transmissor e até quatro espectadores. Qualidade de envio selecionável de 480p, 720p, 1080p ou 1440p. O transmissor envia por espectador e o WebRTC adapta os envios ao congestionamento. A resolução real depende do dispositivo, da captura e da rede.
 - **Host** inicial é quem abre a sessão. Na saída ou expiração do heartbeat, o servidor elege o melhor candidato disponível e incrementa o mandato. Quem retorna entra como participante. O transmissor pode ser outra pessoa. Quando o transmissor sai, alguém na sala pode iniciar uma nova transmissão.

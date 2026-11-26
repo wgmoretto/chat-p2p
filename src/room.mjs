@@ -31,7 +31,7 @@ class Peer {
     this.announced = {};
     this.initiator = room.instance.localeCompare(member.instance) < 0;
     this.pc = new RTCPeerConnection(room.configuration);
-    this.chatReady = roomChatCipher(room.id, room.self, room.chatIdentity, member)
+    if (room.hasChat) this.chatReady = roomChatCipher(room.id, room.self, room.chatIdentity, member)
       .then((cipher) => {
         this.chatCipher = cipher;
         this.room.render();
@@ -42,13 +42,14 @@ class Peer {
       if (candidate) this.send({ type: 'ice', candidate: candidate.toJSON() });
     };
     this.pc.ontrack = (event) => {
-      const kind = mediaOrder[this.pc.getTransceivers().indexOf(event.transceiver)];
-      if (!kind) return;
+      const kind = room.mediaKinds[this.pc.getTransceivers().indexOf(event.transceiver)];
+      if (!kind || event.track.kind !== (kind === 'mic' ? 'audio' : 'video')) return;
       this.tracks[kind] = { track: event.track, stream: new MediaStream([event.track]) };
       this.room.render();
     };
     this.pc.ondatachannel = ({ channel }) => {
-      if (!this.initiator && channel.label === 'room') this.bindChannel(channel);
+      if (room.hasChat && !this.initiator && channel.label === 'room') this.bindChannel(channel);
+      else channel.close();
     };
     this.pc.onconnectionstatechange = () => {
       if (this.pc.connectionState === 'connected') {
@@ -62,8 +63,8 @@ class Peer {
       this.room.render();
     };
     if (this.initiator) {
-      for (const kind of mediaOrder) this.pc.addTransceiver(kind === 'mic' ? 'audio' : 'video', { direction: 'sendrecv' });
-      this.bindChannel(this.pc.createDataChannel('room', { ordered: true }));
+      for (const kind of room.mediaKinds) this.pc.addTransceiver(kind === 'mic' ? 'audio' : 'video', { direction: 'sendrecv' });
+      if (room.hasChat) this.bindChannel(this.pc.createDataChannel('room', { ordered: true }));
       this.offer(false).catch((error) => this.room.report(error));
     }
   }
@@ -148,13 +149,14 @@ class Peer {
   }
 
   announce() {
-    const media = Object.fromEntries(mediaOrder.map((kind) => [kind, Boolean(this.room.sendTrack(kind))]));
-    if (!this.member.chatKey || !this.send({ type: 'media', ...media })) this.data({ kind: 'media', ...media });
+    const media = Object.fromEntries(this.room.mediaKinds.map((kind) => [kind, Boolean(this.room.sendTrack(kind))]));
+    if (this.room.mode === 'voice') this.send({ type: 'media', ...media });
+    else if (!this.member.chatKey || !this.send({ type: 'media', ...media })) this.data({ kind: 'media', ...media });
   }
 
   async setTracks() {
     await Promise.all(this.pc.getTransceivers().map(async ({ sender }, index) => {
-      const kind = mediaOrder[index];
+      const kind = this.room.mediaKinds[index];
       const track = kind ? this.room.sendTrack(kind) : null;
       if (sender.track !== track) await sender.replaceTrack(track);
       if (track?.kind !== 'video') return;
@@ -231,6 +233,8 @@ export class RoomConnection {
   constructor(room, group, session, roster, onState, onError) {
     this.id = room.id;
     this.mode = room.mode;
+    this.hasChat = room.mode !== 'voice';
+    this.mediaKinds = room.mode === 'voice' ? ['mic'] : mediaOrder;
     this.device = group.chat_mode === 'mls' ? session.identity : null;
     this.roster = roster;
     this.onState = onState;
@@ -253,7 +257,7 @@ export class RoomConnection {
   async connect(ice) {
     if (this.closed) return;
     this.device ??= await createIdentity();
-    this.chatIdentity ??= await makeRoomChatKey(this.id, this.self, this.device.privateKey);
+    if (this.hasChat) this.chatIdentity ??= await makeRoomChatKey(this.id, this.self, this.device.privateKey);
     if (this.closed) return;
     this.hasTurn = ice.iceServers.some(({ urls }) => [urls].flat().some((url) => /^turns?:/.test(url)));
     this.configuration = {
@@ -263,9 +267,9 @@ export class RoomConnection {
     this.ice = ice;
     const url = new URL('/signal', location.origin);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const { chatKey, chatProof } = this.chatIdentity;
     url.search = new URLSearchParams({
-      room: this.id, instance: this.instance, signing: this.device.signing, chatKey, chatProof,
+      room: this.id, instance: this.instance, signing: this.device.signing,
+      ...(this.chatIdentity && { chatKey: this.chatIdentity.chatKey, chatProof: this.chatIdentity.chatProof }),
     }).toString();
     this.socket = new WebSocket(url);
     this.socket.onmessage = ({ data }) => {
@@ -328,7 +332,7 @@ export class RoomConnection {
 
   get map() { return this.state?.peers ?? []; }
   get personalPolicy() { return this.map.find(({ id }) => id === this.self.id) ?? {}; }
-  get canPublish() { return this.mode === 'meet' || this.state?.publisher === this.self.id; }
+  get canPublish() { return this.mode !== 'live' || this.state?.publisher === this.self.id; }
 
   async receive(event) {
     if (this.closed) return;
@@ -361,7 +365,7 @@ export class RoomConnection {
     }
     if (!peer || peer.member.instance !== event.fromInstance) return;
     if (event.type === 'ice') await peer.ice(event.candidate);
-    if (event.type === 'chat') await peer.readChat(event);
+    if (event.type === 'chat' && this.hasChat) await peer.readChat(event);
     if (event.type === 'media') peer.setAnnouncement(event);
     if (event.type === 'sdp') await peer.description(event, peer.member.signing);
   }
@@ -372,6 +376,7 @@ export class RoomConnection {
   }
 
   async toggle(kind) {
+    if (!this.mediaKinds.includes(kind)) return;
     if (this.local[kind].track) {
       this.stopLocal(kind);
     } else {
@@ -398,7 +403,8 @@ export class RoomConnection {
   }
 
   sendTrack(kind) {
-    if (!this.canPublish || (kind === 'mic' ? this.personalPolicy.muted : this.personalPolicy.videoBlocked)) return null;
+    if (!this.mediaKinds.includes(kind) || !this.canPublish ||
+        (kind === 'mic' ? this.personalPolicy.muted : this.personalPolicy.videoBlocked)) return null;
     return this.local[kind].track;
   }
 
@@ -470,7 +476,7 @@ export class RoomConnection {
       if (!account) return [];
       const self = account.id === this.self.id;
       const peer = this.peers.get(account.id);
-      const allowed = this.mode === 'meet' || this.state?.publisher === account.id;
+      const allowed = this.mode !== 'live' || this.state?.publisher === account.id;
       const media = Object.fromEntries(mediaOrder.map((kind) => {
         const isBlocked = kind === 'mic' ? policy.muted : policy.videoBlocked;
         const stream = allowed && !isBlocked && (self ? this.local[kind].stream : peer?.pc.connectionState === 'connected' && peer.announced[kind] && peer.tracks[kind].stream);

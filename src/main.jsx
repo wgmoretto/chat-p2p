@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ArrowUpRight, Bell, CircleHelp, LockKeyhole, Pencil, Phone, Plus, Radio, UserMinus, Users, Video } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Bell, CircleHelp, LockKeyhole, Pencil, Phone, Plus, UserMinus, Users } from 'lucide-react';
 import { readPreference, request, writePreference } from './local.mjs';
 import { changeMembership, makeInvite, newGroup, postGroupMessage, readInvite,
   requestAdmission, restore, syncGroup } from './workspace.mjs';
-import { Access, Brand, Conversation, initials, Modal, People, ThemePicker } from './views.jsx';
+import { Access, Brand, Conversation, initials, Modal, People, roomTypes, ThemePicker } from './views.jsx';
 import { Meeting } from './Meeting.jsx';
 import { Activity, Inbox } from './Inbox.jsx';
 import { unlockChat } from './inbox.mjs';
@@ -16,10 +16,10 @@ function GroupRooms({ rooms, ready, canJoin, enter, canManage, rename }) {
     <h2>Salas do grupo</h2>
     {!rooms.length && <p className="muted">{ready ? 'Nenhuma sala neste grupo.' : 'Carregando salas…'}</p>}
     <ul>{rooms.map((item) => {
-      const Icon = item.mode === 'live' ? Radio : Video;
+      const { icon: Icon, label } = roomTypes[item.mode];
       return <li key={item.id}>
         <span className="room-symbol"><Icon size={19} aria-hidden="true" /></span>
-        <span className="person-label"><strong>{item.name}</strong><small>{item.mode === 'live' ? 'Live' : 'Reunião'}</small></span>
+        <span className="person-label"><strong>{item.name}</strong><small>{label}</small></span>
         <div className="room-actions">
           {canManage && <button className="icon" aria-label={'Renomear ' + item.name} title="Renomear sala" onClick={() => rename(item)}><Pencil size={17} /></button>}
           <button aria-label={'Entrar em ' + item.name} disabled={!canJoin} onClick={() => enter(item)}>Entrar <ArrowUpRight size={16} /></button>
@@ -35,6 +35,7 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
   const [contactId, setContactId] = useState(null);
   const [contactCall, setContactCall] = useState(false);
   const [invites, setInvites] = useState([]);
+  const [roomUnread, setRoomUnread] = useState({});
   const [selected, select] = useState(null);
   const [room, enter] = useState(null);
   const [roomList, setRoomList] = useState({ id: null, rooms: [] });
@@ -77,6 +78,7 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
     setGroups(next.groups);
     setFriends(next.friends);
     setInvites(next.invites);
+    setRoomUnread(next.roomUnread ?? {});
     setReady(true);
   }, []);
 
@@ -265,12 +267,13 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
     });
   }
 
-  const surface = activeRoom || contact && contactCall ? 'meeting'
+  const isTextRoom = activeRoom?.mode === 'text';
+  const surface = activeRoom && !isTextRoom || contact && contactCall ? 'meeting'
     : contact || active ? 'conversation' : 'activity';
-  const HeaderIcon = activeRoom ? (activeRoom.mode === 'live' ? Radio : Video) : group ? Users : Bell;
+  const HeaderIcon = activeRoom ? roomTypes[activeRoom.mode].icon : group ? Users : Bell;
 
   return <div className="workspace">
-    <WorkspaceRail groups={groups} friends={friends} group={group} groupRooms={roomListForGroup} room={activeRoom}
+    <WorkspaceRail groups={groups} friends={friends} group={group} groupRooms={roomListForGroup} room={activeRoom} roomUnread={roomUnread}
       contact={contact} session={session} appearance={appearance} ready={ready}
       canJoin={canJoin} notice={notice} showActivity={() => switchGroup(null)} openContact={openContact}
       select={switchGroup} enter={enterRoom} create={open}
@@ -287,7 +290,7 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
             <span className="header-symbol"><HeaderIcon size={20} aria-hidden="true" /></span>
             <div>
               <h1>{activeRoom?.name ?? group?.name ?? 'Atividade'}</h1>
-              {group && <small>{activeRoom ? (activeRoom.mode === 'live' ? 'Live' : 'Reunião') : 'Grupo privado'}</small>}
+              {group && <small>{activeRoom ? roomTypes[activeRoom.mode].label : 'Grupo privado'}</small>}
             </div>
           </div>}
         </div>
@@ -312,6 +315,10 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
         </section>
         : !group ? <Activity friends={friends} invites={invites} ready={ready} busy={busy} add={() => open('friend')}
           reply={changeFriend} respond={respondToInvite} open={openContact} />
+        : isTextRoom ? <section className="group-view direct-thread" aria-label="Sala de texto">
+          <Inbox key={activeRoom.id} id={activeRoom.id} label={activeRoom.name} session={session}
+            unlock={() => open('unlock')} report={report} onRead={onRead} />
+        </section>
         : activeRoom ? <Meeting key={activeRoom.id} room={activeRoom} group={group} session={session} verified={record?.roster}
           leave={() => enter(null)} report={report} createLive={() => open('live')} />
         : active ? <section className="group-view" aria-label="Gerenciamento do grupo">
@@ -368,7 +375,9 @@ function Dashboard({ session, invite: invitation, clearInvite, onLogout, appeara
             : 'O convite aparece na Atividade do seu amigo e vale por 24 horas.'}{legacy && ' O dono aprova a entrada neste grupo cifrado.'}</p>
         </> : <>
           <label>Nome<input name="name" autoFocus required maxLength={80} defaultValue={roomToRename?.name} /></label>
-          {dialog === 'room' && <label>Tipo<select name="mode"><option value="meet">Reunião</option><option value="live">Live</option></select></label>}
+          {dialog === 'room' && <label>Tipo<select name="mode">
+            {Object.entries(roomTypes).map(([mode, { label }]) => <option key={mode} value={mode}>{label}</option>)}
+          </select></label>}
         </>}
         {error && <p className="error" role="alert">{error}</p>}
         <div className="modal-actions">
