@@ -195,15 +195,16 @@ button.mobile-nav-toggle { display: none; }
 .activity-empty { display: grid; justify-items: start; align-content: center; gap: 9px; min-height: 212px; padding: 22px; }
 .activity-empty .primary { margin-top: 5px; }
 
-.meeting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, .48fr); gap: 12px; padding: 14px var(--gutter) 17px; }
+.meeting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 12px; padding: 14px var(--gutter) 17px; }
 .meeting.panel-hidden { grid-template-columns: minmax(0, 1fr); }
 .meeting audio { display: none; }
 .meeting-center { display: grid; align-content: start; gap: 10px; min-width: 0; }
 .stage { position: relative; display: grid; align-content: center; gap: 9px; min-height: clamp(320px, calc(100dvh - 248px), 718px); padding: 49px 10px 12px; background: var(--media); color: var(--media-text); border-radius: var(--radius); overflow: hidden; }
 .stage-presenting { align-content: start; }
-.stage-audio .tiles { grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr)); }
-.stage-audio .tile { min-height: 88px; max-height: 155px; }
-.stage-audio .tile-avatar { width: 48px; height: 48px; font-size: 1.15rem; }
+.stage-audio .tiles { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
+.stage-audio .tiles:not(.thumbnails) .tile { width: 180px; min-height: 160px; max-height: 180px; aspect-ratio: 1; background: transparent; border: 0; }
+.stage-audio .tile-label { position: static; background: transparent; text-align: center; justify-content: center; }
+.stage-audio .tile-avatar { width: 72px; height: 72px; font-size: 1.6rem; }
 .stage-status { position: absolute; top: 12px; inset-inline: 12px; display: flex; justify-content: space-between; gap: 5px; z-index: 1; }
 .connection-indicator, .live-indicator { display: inline-flex; align-items: center; gap: 5px; border-radius: 7px; padding: 5px 8px; font-size: .79rem; font-weight: 670; background: var(--media-tile); }
 .connection-indicator { margin-left: auto; }
@@ -243,10 +244,22 @@ button.mobile-nav-toggle { display: none; }
 .person-volume label { display: flex; align-items: center; gap: 7px; color: var(--muted); }
 .person-volume input[type=range] { accent-color: var(--accent); width: clamp(82px, 14vw, 146px); padding: 0; min-height: 34px; }
 .person-volume span { font-variant-numeric: tabular-nums; min-width: 4ch; text-align: end; }
-.meeting-controls { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-.meeting-controls button { padding-inline: 8px; min-height: 39px; font-size: .86rem; }
-.meeting-controls .danger { margin-inline-start: auto; }
-.meeting-controls button[aria-pressed=true] { background: var(--tint); border-color: var(--accent); color: var(--accent-dark); }
+/* Call controls share one compact rail; device and session actions stay grouped. */
+.meeting-controls { grid-column: 1 / -1; display: flex; align-items: center; gap: 16px; padding: 0 0 12px; border-bottom: 1px solid var(--border); }
+.call-devices, .call-actions { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.call-devices { padding-right: 16px; border-right: 1px solid var(--border); }
+.meeting-controls button, .call-settings summary { min-height: 44px; padding: 8px 10px; font-size: .8rem; white-space: nowrap; border: 1px solid transparent; background: transparent; border-radius: 8px; }
+.meeting-controls button:hover:not(:disabled), .call-settings summary:hover { background: var(--tint); }
+.meeting-controls .danger { margin-inline-start: auto; background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
+.meeting-controls button[aria-pressed=true] { background: var(--tint); color: var(--accent-dark); }
+.call-settings { position: relative; }
+.call-settings summary { display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; list-style: none; }
+.call-settings summary::-webkit-details-marker { display: none; }
+.call-settings[open] summary { background: var(--tint); }
+.call-settings-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 5; width: 280px; padding: 16px; display: grid; gap: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.call-settings-panel > strong { font-size: .88rem; }
+.call-settings-panel button { justify-content: flex-start; }
+.call-settings-panel .quality { justify-content: space-between; padding: 0; }
 .quality { display: flex; align-items: center; gap: 6px; padding-inline: 4px; font-size: .81rem; color: var(--muted); }
 .quality select { min-height: 33px; padding-block: 3px; }
 .media-notice { color: var(--danger); background: var(--danger-bg); padding: 9px 12px; border-radius: 9px; font-size: .9rem; }
@@ -346,7 +359,13 @@ button.mobile-nav-toggle { display: none; }
   .stage-audio { min-height: 190px; }
   .stage-presenting { min-height: 0; }
   .tile { min-height: 82px; }
-  .meeting-controls button { flex: 1 1 auto; }
+  .meeting-controls { gap: 4px; }
+  .call-devices { padding-right: 4px; }
+  .call-devices, .call-actions { gap: 0; }
+  .call-settings summary span { display: none; }
+  .meeting-controls button, .call-settings summary { padding-inline: 10px; }
+  .call-settings-panel { position: fixed; top: auto; right: 12px; left: 12px; width: auto; }
+  .stage-audio .tiles:not(.thumbnails) .tile { width: 128px; min-height: 128px; }
   .stream-viewer .stream-actions span { display: none; }
 }
 @media (max-width: 365px) {
@@ -354,3 +373,11 @@ button.mobile-nav-toggle { display: none; }
   .header-actions button { min-height: 38px; }
   .thread-heading .avatar, .header-symbol { width: 34px; height: 34px; }
 }
+
+@media (max-width: 1400px) {
+  .meeting-controls > .call-devices button span,
+  .meeting-controls > .call-actions > button span,
+  .meeting-controls > .danger span { display: none; }
+}
+.main-panel[data-surface="meeting"] .workspace-header h1 { font-size: 1.2rem; }
+.main-panel[data-surface="meeting"] .workspace-header { min-height: 64px; padding-block: 8px; }

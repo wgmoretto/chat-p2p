@@ -315,6 +315,17 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
 
     await newRoom(alice, 'Conversas', 'voice');
     await expect(navRoom(alice, 'Conversas')).toHaveAttribute('title', 'Chat de voz');
+    await expect(alice.locator('.stage-audio .tile')).toBeVisible();
+    await alice.getByLabel('Tema').selectOption('dark');
+    await alice.screenshot({ path: testInfo.outputPath('voz-solo-dark.png') });
+    await alice.setViewportSize({ width: 1024, height: 768 });
+    await alice.screenshot({ path: testInfo.outputPath('voz-tablet.png') });
+    await alice.setViewportSize({ width: 390, height: 844 });
+    await alice.getByLabel('Configurações da chamada', { exact: true }).click();
+    await alice.screenshot({ path: testInfo.outputPath('voz-ajustes-mobile.png') });
+    await alice.keyboard.press('Escape');
+    await alice.setViewportSize({ width: 1440, height: 900 });
+    await alice.getByLabel('Tema').selectOption('light');
     await navRoom(bob, 'Conversas').click();
     if (!blockedIce) {
       await navRoom(carol, 'Conversas').click();
@@ -336,6 +347,7 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     }
     await microphone(bob).click();
     await expect(microphone(bob)).toHaveAttribute('aria-pressed', 'true');
+    await bob.getByLabel('Configurações da chamada', { exact: true }).click();
     const noise = bob.getByRole('button', { name: 'Redução de ruído' });
     await expect(noise).toHaveAttribute('aria-pressed', 'true');
     await expect.poll(() => bob.evaluate(() => window.qaMicTrack?.getConstraints().noiseSuppression)).toBe(true);
@@ -409,7 +421,9 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await expect(bob.getByText('Bom dia! Vamos começar a reunião?')).toBeVisible();
     await send(bob, 'Bom dia! Podemos começar.');
     await expect(alice.getByText('Bom dia! Podemos começar.')).toBeVisible();
+    await alice.getByLabel('Configurações da chamada', { exact: true }).click();
     await expect(alice.getByLabel('Qualidade de envio')).toBeInViewport();
+    await alice.keyboard.press('Escape');
     await expect(alice.getByRole('heading', { name: 'Reunião da equipe', exact: true })).toBeInViewport();
     await alice.screenshot({ path: testInfo.outputPath('reuniao-desktop.png') });
     await bob.setViewportSize({ width: 390, height: 844 });
@@ -452,6 +466,7 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await expect(alice.getByRole('button', { name: 'Chat da sala' })).toBeHidden();
     await alice.getByRole('button', { name: 'Chat e pessoas' }).click();
     await expect(alice.getByRole('button', { name: 'Chat da sala' })).toBeVisible();
+    await bob.getByLabel('Configurações da chamada', { exact: true }).click();
     await bob.getByLabel('Qualidade de envio').selectOption('1440');
     await expect(bob.getByLabel('Qualidade de envio')).toHaveValue('1440');
     await expect(bob.getByLabel('Qualidade de envio')).toBeEnabled();
