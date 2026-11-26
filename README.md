@@ -50,6 +50,12 @@ O Compose publica TURN em UDP e TCP. Algumas redes exigem TURN/TLS, que precisa 
 
 Para hospedar em um Windows Server, use a mesma configuração em uma VM Linux com Hyper-V. Configure o HTTPS da aplicação na VM e o acesso externo às portas do coturn. Para backup do servidor, use um backup consistente do SQLite, incluindo o WAL quando aplicável, e teste a restauração. As chaves privadas do navegador não fazem parte desse backup.
 
+## Habilitar TURN em um App existente no Easypanel
+
+Se o chat já roda em um serviço **App**, adicione um serviço **Compose** separado, com origem no mesmo repositório e arquivo `compose.turn.yaml`. Esse serviço sobe o coturn e o chat continua usando o banco do App atual. Se a instalação já tem o `coturn` do Compose completo, use aquele serviço.
+
+No Compose do coturn, em **Environment**, ative **Create .env file** e preencha `TURN_REALM`, `TURN_EXTERNAL_IP` e `TURN_SECRET` conforme a tabela acima. No App existente, configure `TURN_URLS`, `STUN_URLS` e o mesmo `TURN_SECRET`. Aponte o hostname do TURN para o IPv4 público com DNS direto e libere as portas do passo 4. Após subir o relay e fazer o redeploy do App, recarregue ambos os navegadores e entre novamente na chamada. [Easypanel Compose](https://easypanel.io/docs/services/compose)
+
 ## Atualizar uma instalação existente
 
 Faça o redeploy a partir da `main` preservando o volume `chat-data`. Entre com o usuário e a senha que você já usa. Contas e grupos existentes são preservados. As chaves dos grupos MLS antigos ficam no perfil e no endereço usados antes da atualização. Use esse navegador para abrir as salas e ler o histórico desses grupos.

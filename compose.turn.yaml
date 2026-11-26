@@ -1,0 +1,38 @@
+services:
+  coturn:
+    image: coturn/coturn:4.19.2-r0
+    restart: unless-stopped
+    command:
+      - -n
+      - --log-file=stdout
+      - --realm=${TURN_REALM:?Configure TURN_REALM}
+      - --external-ip=${TURN_EXTERNAL_IP:?Configure TURN_EXTERNAL_IP}
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:?Configure TURN_SECRET}
+      - --fingerprint
+      - --no-dtls
+      - --no-tls
+      - --no-cli
+      - --unauthorized-ratelimit=enforce
+      - --no-multicast-peers
+      - --no-tcp-relay
+      - --user-quota=12
+      - --total-quota=32
+      - --bps-capacity=${TURN_CAPACITY_BYTES_PER_SECOND:-10000000}
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=100.64.0.0-100.127.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --denied-peer-ip=::1
+      - --denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
