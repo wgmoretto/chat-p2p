@@ -8,6 +8,7 @@ import { packageStatement, verify } from '../shared/crypto.mjs';
 import { openDatabase, transaction } from './storage.mjs';
 import { attachRooms } from './rooms.mjs';
 import { friendService } from './friends.mjs';
+import { chatService } from './chat.mjs';
 import { groupService, encoded, idPattern, shortName, HttpError, requireValue } from './groups.mjs';
 
 const derivePassword = promisify(scrypt);
@@ -85,6 +86,8 @@ export function createApplication(options = {}) {
   const accountsByUsername = db.prepare('SELECT * FROM accounts WHERE username = ?');
   const authLimits = new Map();
   const group = groupService(db, hash, (groupId, accountId) => runtime.revoke(groupId, accountId));
+  const chat = chatService(db, group);
+  const onlineUntil = new Map();
   const userData = ({ id, username, name, signing }) => ({ id, username, name, signing });
   let runtime;
   const friends = friendService(db, {
@@ -149,7 +152,7 @@ export function createApplication(options = {}) {
   async function validateClaim(id, signing, claim) {
     requireValue(typeof claim === 'object' && idPattern.test(claim?.group), 400, 'Convite inválido.');
     const { token, group: groupId, keyPackage, packageSignature } = claim;
-    const invite = group.invite(token);
+    const invite = group.invite(token, id);
     requireValue(invite.group_id === groupId, 400, 'Este convite pertence a outro grupo.');
     if (invite.chat_mode === 'mls') {
       requireValue(encoded(keyPackage, 80, 16000) && encoded(packageSignature, 86, 86) &&
@@ -189,6 +192,33 @@ export function createApplication(options = {}) {
       res.setHeader('Set-Cookie', cookie('', 0));
       return {};
     }
+    if (method === 'GET' && pathname === '/api/workspace') {
+      const now = Date.now();
+      for (const [id, until] of onlineUntil) if (until <= now) onlineUntil.delete(id);
+      onlineUntil.set(account.id, now + 15_000);
+      const unread = chat.unread(account.id);
+      return {
+        friends: friends.list(account.id).map((friend) => ({
+          ...friend, online: Boolean(friend.roomId && onlineUntil.has(friend.id)), unread: unread[friend.roomId] ?? 0,
+        })),
+        groups: group.list(account.id).map((item) => ({ ...item, unread: unread[item.id] ?? 0 })),
+        invites: group.friendInvites(account.id),
+      };
+    }
+    if (pathname === '/api/chat-key') {
+      if (method === 'GET') return chat.vault(account.id);
+      if (method === 'POST') {
+        limitAuth(req);
+        const { password, ...vault } = await payload(req);
+        const { password: expected } = accountsByUsername.get(account.username);
+        requireValue(passwordValid(password) && equal(await encodePassword(password, expected.split(':')[0]), expected),
+          401, 'Senha inválida.');
+        return chat.enroll(account.id, vault);
+      }
+    }
+    if (method === 'POST' && pathname === '/api/invitations/decline') {
+      return group.declineInvite(account.id, (await payload(req)).token);
+    }
     if (pathname === '/api/friends') {
       if (method === 'GET') return friends.list(account.id);
       if (method === 'POST') {
@@ -208,6 +238,16 @@ export function createApplication(options = {}) {
       transaction(db, () => group.claim(claim.token, claim.group, account.id, claim.keyPackage, claim.packageSignature));
       return {};
     }
+    const conversation = pathname.match(/^\/api\/groups\/([0-9a-f-]{36})\/(messages|recipients|read|invite-friend)$/);
+    if (conversation) {
+      const [, id, action] = conversation;
+      if (method === 'GET' && action === 'recipients') return chat.recipients(id, account.id);
+      if (method === 'GET' && action === 'messages') return chat.history(id, account.id, url.searchParams.get('before'), url.searchParams.get('after'));
+      if (method === 'POST' && action === 'messages') return chat.post(id, account.id, await payload(req));
+      if (method === 'POST' && action === 'read') return chat.read(id, account.id, (await payload(req)).seq);
+      if (method === 'POST' && action === 'invite-friend') return group.inviteFriend(id, account.id, await payload(req));
+    }
+
     const rename = pathname.match(/^\/api\/groups\/([0-9a-f-]{36})\/rooms\/([0-9a-f-]{36})\/rename$/);
     if (method === 'POST' && rename) {
       return group.renameRoom(rename[1], account.id, rename[2], (await payload(req)).name);

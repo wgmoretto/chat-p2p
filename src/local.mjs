@@ -36,9 +36,12 @@ export function writePreference(name, value) {
   try { localStorage.setItem('chat-p2p:' + name, value); } catch {}
 }
 
-export async function request(path, body) {
-  const result = await fetch('/api/' + path, body === undefined ? {} : {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+export async function request(path, body, options) {
+  const result = await fetch('/api/' + path, {
+    ...options,
+    ...(body === undefined ? {} : {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }),
   });
   const data = await result.json();
   if (!result.ok) throw Object.assign(new Error(data.error || 'Não foi possível concluir a ação.'), { status: result.status });

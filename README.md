@@ -17,12 +17,12 @@ npm.cmd start
 
 1. Abra [http://localhost:3000](http://localhost:3000). Crie a primeira conta com o código de instalação. A senha precisa ter ao menos 12 caracteres.
 2. Após a configuração inicial, cada pessoa pode criar uma conta com usuário e senha. A mesma conta pode entrar em outro perfil ou dispositivo.
-3. Em **Amigos**, adicione alguém pelo `@usuário` e aguarde o aceite. Clique em **Conversar**. O outro participante verá **Atender** e poderá entrar. O chat existe durante a sessão.
-4. Para mais pessoas, crie um grupo privado, compartilhe o convite e entre em **Salas**. Use **Pessoas** para gerenciar membros. Donos e moderadores podem renomear salas; o nome muda para todos sem encerrar a chamada.
+3. Na lista **Amigos**, use **Adicionar amigo** e informe o `@usuário`. O pedido aparece em **Atividade**. Após o aceite, clique no contato para abrir o histórico. Use **Ligar** para iniciar uma chamada.
+4. Para mais pessoas, crie um grupo privado e use **Convidar** para selecionar um amigo. Ele pode aceitar em **Atividade**. O **Chat do grupo** guarda mensagens cifradas, e **Salas** abre reuniões e lives. Use **Pessoas** para gerenciar membros. Donos e moderadores podem renomear salas; o nome muda para todos sem encerrar a chamada.
 5. Na reunião, use **Microfone**, **Câmera** e **Compartilhar tela** para publicar. O botão de maximizar em cada vídeo abre uma visualização que preserva a proporção e mostra a resolução recebida. Use **Qualidade de envio** para escolher a resolução desejada de câmera e tela. Em uma live, o transmissor controla a qualidade.
 6. No menu da conta, escolha **Sistema**, **Claro** ou **Escuro**. O tema e a qualidade de envio são lembrados pelo navegador.
 
-O SQLite local fica em `data/chat.sqlite` e guarda contas, amizades e grupos. O login e as amizades são independentes das chaves de um navegador.
+O SQLite local fica em `data/chat.sqlite` e guarda contas, amizades, grupos, convites, posições de leitura e mensagens cifradas. O login e as amizades são independentes das chaves de um navegador.
 
 ## Publicar no Easypanel
 
@@ -50,7 +50,7 @@ Se os participantes aparecem, mas a sala mostra **Mídia indisponível**, verifi
 
 O Compose publica TURN em UDP e TCP. Algumas redes exigem TURN/TLS, que precisa de certificado e porta próprios no coturn. WebRTC mantém o conteúdo cifrado entre os clientes também quando o relay usa TCP. Para usar um TURN separado, configure o mesmo segredo no relay externo e na API, informe as URLs públicas na API e remova o serviço `coturn` da configuração de deploy.
 
-Para hospedar em um Windows Server, use a mesma configuração em uma VM Linux com Hyper-V. Configure o HTTPS da aplicação na VM e o acesso externo às portas do coturn. Para backup do servidor, use um backup consistente do SQLite, incluindo o WAL quando aplicável, e teste a restauração. As chaves privadas do navegador não fazem parte desse backup.
+Para hospedar em um Windows Server, use a mesma configuração em uma VM Linux com Hyper-V. Configure o HTTPS da aplicação na VM e o acesso externo às portas do coturn. Para backup do servidor, use um backup consistente do SQLite, incluindo o WAL quando aplicável, e teste a restauração. O backup inclui a cópia cifrada das chaves das conversas permanentes. As chaves MLS antigas precisam do perfil de navegador em que foram criadas.
 
 ## Habilitar TURN em um App existente no Easypanel
 
@@ -60,19 +60,19 @@ No Compose do coturn, em **Environment**, ative **Create .env file** e preencha 
 
 ## Atualizar uma instalação existente
 
-Faça o redeploy a partir da `main` preservando o volume `chat-data`. Entre com o usuário e a senha que você já usa. Contas e grupos existentes são preservados. As chaves dos grupos MLS antigos ficam no perfil e no endereço usados antes da atualização. Use esse navegador para abrir as salas e ler o histórico desses grupos.
+Faça o redeploy a partir da `main` preservando o volume `chat-data`. Entre com o usuário e a senha que você já usa. As tabelas novas são criadas na inicialização. Contas e grupos existentes são preservados. Sessões abertas antes da atualização podem pedir a senha uma vez para habilitar o histórico. As chaves dos grupos MLS antigos ficam no perfil e no endereço usados antes da atualização. Use esse navegador para abrir as salas e ler o histórico desses grupos.
 
 O código de instalação continua reservado à criação da primeira conta em um banco vazio. As contas seguintes podem se cadastrar e enviar pedidos sem um convite de grupo. Pedidos dependem de aceite e grupos seguem privados.
 
 ## Comportamento do piloto
 
-- **Amizades** por `@usuário`, com pedido e aceite. Cada dupla tem uma conversa privada temporária e pode fazer uma chamada com áudio, câmera e tela.
-- **Grupos privados** com até 32 membros e convites de uso único. Nos novos grupos, o chat acontece nas salas e dura a sessão. Os grupos MLS existentes mantêm seu histórico e suas chaves locais.
+- **Amizades** por `@usuário`, com pedido e aceite. Cada dupla tem uma conversa privada com histórico, presença e contador de não lidas. A chamada com áudio, câmera e tela é aberta pelo botão **Ligar**.
+- **Grupos privados** com até 32 membros e convites de uso único. Convites para amigos chegam em **Atividade**. As mensagens dos grupos usam histórico e contador de não lidas. Grupos MLS existentes mantêm seu próprio histórico e suas chaves locais.
 - **Reuniões** com até quatro pessoas. Microfone, câmera e tela usam conexões WebRTC independentes do host da sessão. O chat da sala dura a sessão e prioriza o canal de dados WebRTC. Se esse canal estiver indisponível, o servidor encaminha somente mensagens cifradas.
 - **Lives** de um transmissor e até quatro espectadores. Qualidade de envio selecionável de 480p, 720p, 1080p ou 1440p. O transmissor envia por espectador e o WebRTC adapta os envios ao congestionamento. A resolução real depende do dispositivo, da captura e da rede.
 - **Host** inicial é quem abre a sessão. Na saída ou expiração do heartbeat, o servidor elege o melhor candidato disponível e incrementa o mandato. Quem retorna entra como participante. O transmissor pode ser outra pessoa. Quando o transmissor sai, alguém na sala pode iniciar uma nova transmissão.
 - **Moderação** com papéis de dono, moderador e membro. Na sessão, dono e moderadores podem controlar publicação e expulsar conforme o papel. O dono controla associação e banimento do grupo. Em grupos MLS antigos, mudanças de membros seguem o fluxo cifrado existente. Ações de sala são registradas no SQLite.
-- **Criptografia** — a mídia usa WebRTC cifrado entre navegadores, inclusive via TURN. O chat da sala é cifrado no navegador antes do envio por WebRTC ou WebSocket. Nas sessões novas, o servidor autenticado associa a conta à chave temporária usada para assinar o SDP e autenticar a chave do chat. Os grupos MLS antigos continuam usando as chaves verificadas dos dispositivos. O servidor vê presença, identidade, permissões, horários e sinalização. [WebRTC RFC 8827](https://www.rfc-editor.org/rfc/rfc8827.html) · [MLS RFC 9420](https://www.rfc-editor.org/rfc/rfc9420.html) · [ts-mls](https://github.com/LukaJCB/ts-mls)
+- **Criptografia** — a mídia usa WebRTC cifrado entre navegadores, inclusive via TURN. O chat da sala é cifrado no navegador antes do envio por WebRTC ou WebSocket. Nas sessões novas, o servidor autenticado associa a conta à chave temporária usada para assinar o SDP e autenticar a chave do chat. Os grupos MLS antigos continuam usando as chaves verificadas dos dispositivos. As conversas permanentes usam AES-GCM no navegador e uma chave de mensagem protegida com RSA-OAEP por destinatário. Uma cópia cifrada da chave privada da conta é protegida pela senha com PBKDF2 e permite ler o histórico em outro navegador. Esse fluxo confia no diretório de chaves e na autenticação do servidor. O servidor vê presença, identidade, destinatários, permissões, horários e sinalização. [WebRTC RFC 8827](https://www.rfc-editor.org/rfc/rfc8827.html) · [MLS RFC 9420](https://www.rfc-editor.org/rfc/rfc9420.html) · [ts-mls](https://github.com/LukaJCB/ts-mls)
 
 ## Verificação
 

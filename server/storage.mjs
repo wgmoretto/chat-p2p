@@ -47,6 +47,31 @@ export function openDatabase(path) {
       PRIMARY KEY (first, second), CHECK (first < second), CHECK (requester IN (first, second))
     );
     CREATE INDEX IF NOT EXISTS friendships_by_second ON friendships(second);
+    CREATE TABLE IF NOT EXISTS friend_invites (
+      hash TEXT PRIMARY KEY REFERENCES invites(hash) ON DELETE CASCADE,
+      token TEXT NOT NULL, group_id TEXT NOT NULL REFERENCES groups(id),
+      inviter TEXT NOT NULL REFERENCES accounts(id), target TEXT NOT NULL REFERENCES accounts(id),
+      UNIQUE (group_id, target)
+    );
+    CREATE INDEX IF NOT EXISTS friend_invites_inbox ON friend_invites(target);
+    CREATE TABLE IF NOT EXISTS chat_keys (
+      account TEXT PRIMARY KEY REFERENCES accounts(id),
+      public_key TEXT NOT NULL, salt TEXT NOT NULL, iv TEXT NOT NULL, wrapped TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, group_id TEXT NOT NULL REFERENCES groups(id),
+      author TEXT NOT NULL REFERENCES accounts(id), created INTEGER NOT NULL, iv TEXT NOT NULL, content TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS chat_by_group ON chat_messages(group_id, seq);
+    CREATE TABLE IF NOT EXISTS chat_recipients (
+      message INTEGER NOT NULL REFERENCES chat_messages(seq) ON DELETE CASCADE,
+      account TEXT NOT NULL REFERENCES accounts(id), wrapped TEXT NOT NULL, PRIMARY KEY (message, account)
+    );
+    CREATE INDEX IF NOT EXISTS chat_recipients_by_account ON chat_recipients(account,message);
+    CREATE TABLE IF NOT EXISTS chat_reads (
+      group_id TEXT NOT NULL REFERENCES groups(id), account TEXT NOT NULL REFERENCES accounts(id),
+      seq INTEGER NOT NULL, PRIMARY KEY (group_id, account)
+    );
     CREATE TABLE IF NOT EXISTS actions (
       id INTEGER PRIMARY KEY, room TEXT NOT NULL REFERENCES rooms(id),
       actor TEXT NOT NULL REFERENCES accounts(id), target TEXT NOT NULL REFERENCES accounts(id),

@@ -9,6 +9,7 @@ async function account(page, name, username, bootstrap = false) {
 }
 async function invite(owner, visitor, role) {
   await owner.getByRole('button', { name: 'Convidar' }).click();
+  await owner.getByRole('button', { name: 'Por link' }).click();
   await owner.getByLabel('Papel').selectOption(role);
   await owner.getByRole('button', { name: 'Gerar convite' }).click();
   const invite = owner.getByLabel('Link de convite');
@@ -36,6 +37,7 @@ async function newRoom(page, name, mode) {
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
 }
 const navRoom = (page, name) => page.getByRole('navigation').getByRole('button', { name, exact: true });
+const contact = (page, name) => page.getByRole('navigation').locator('.contact-item').filter({ hasText: name });
 const blockedIce = process.env.TEST_ICE_BLOCKED === '1';
 const mediaPath = process.env.FORCE_TURN === '1' ? 'Relay TURN' : 'Direta';
 
@@ -62,17 +64,17 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     for (const page of [alice, bob, carol]) page.on('pageerror', (error) => faults.push(error.message));
     await serverBrowser.goto('/');
     await account(serverBrowser, 'Marina', 'marina', true);
-    await expect(serverBrowser.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
+    await expect(serverBrowser.getByRole('heading', { name: 'Atividade', exact: true })).toBeVisible();
 
     await alice.goto('/');
     await alice.getByLabel('Usuário').fill('marina');
     await alice.getByLabel('Senha').fill('senha-para-teste-e2e');
     await alice.getByRole('button', { name: 'Entrar', exact: true }).click();
-    await expect(alice.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
+    await expect(alice.getByRole('heading', { name: 'Atividade', exact: true })).toBeVisible();
     await alice.getByLabel('Tema').selectOption('dark');
     await expect(alice.locator('html')).toHaveCSS('color-scheme', 'dark');
     await alice.reload();
-    await expect(alice.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
+    await expect(alice.getByRole('heading', { name: 'Atividade', exact: true })).toBeVisible();
     await expect(alice.getByLabel('Tema')).toHaveValue('dark');
     await expect(alice.locator('html')).toHaveCSS('background-color', 'rgb(16, 19, 24)');
     await alice.screenshot({ path: testInfo.outputPath('amigos-escuro.png') });
@@ -82,19 +84,20 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
       await page.goto('/');
       await page.getByRole('button', { name: 'Criar conta', exact: true }).click();
       await account(page, name, handle);
-      await expect(page.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Atividade', exact: true })).toBeVisible();
     }
 
-    await alice.getByLabel('Adicionar pelo @usuário').fill('@rafael');
-    await alice.getByRole('button', { name: 'Enviar pedido' }).click();
-    await expect(alice.getByRole('heading', { name: 'Pedidos enviados' })).toBeVisible();
+    await alice.getByRole('navigation').getByRole('button', { name: 'Adicionar amigo' }).click();
+    await alice.getByRole('dialog').getByLabel('Adicionar pelo @usuário').fill('@rafael');
+    await alice.getByRole('dialog').getByRole('button', { name: 'Enviar pedido' }).click();
+    await expect(alice.getByText(/Pedido enviado/)).toBeVisible();
     await bob.getByRole('button', { name: 'Aceitar', exact: true }).click();
-    await expect(alice.getByRole('button', { name: 'Conversar' })).toBeVisible();
-    await alice.getByRole('searchbox', { name: 'Buscar amigos' }).fill('inexistente');
-    await expect(alice.getByText('Nenhum amigo encontrado.')).toBeVisible();
-    await alice.getByRole('searchbox', { name: 'Buscar amigos' }).fill('@rafael');
-    await expect(alice.getByRole('button', { name: 'Conversar' })).toBeVisible();
-    await alice.getByRole('searchbox', { name: 'Buscar amigos' }).clear();
+    await expect(contact(alice, 'Rafael')).toContainText('Online');
+    await alice.getByRole('searchbox', { name: 'Buscar amigos e grupos' }).fill('inexistente');
+    await expect(alice.getByText('Nenhum contato encontrado')).toBeVisible();
+    await alice.getByRole('searchbox', { name: 'Buscar amigos e grupos' }).fill('@rafael');
+    await expect(contact(alice, 'Rafael')).toBeVisible();
+    await alice.getByRole('searchbox', { name: 'Buscar amigos e grupos' }).clear();
     await alice.screenshot({ path: testInfo.outputPath('amigos-desktop.png') });
     await bob.setViewportSize({ width: 390, height: 844 });
     expect(await bob.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
@@ -102,13 +105,42 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await expect(bob.getByRole('navigation')).toBeHidden();
     await bob.getByRole('button', { name: 'Abrir navegação' }).click();
     await expect(bob.getByRole('navigation')).toBeVisible();
-    await bob.getByRole('navigation').getByRole('button', { name: 'Amigos', exact: true }).click();
+    await bob.getByRole('navigation').getByRole('button', { name: 'Atividade', exact: true }).click();
     await expect(bob.getByRole('navigation')).toBeHidden();
     await bob.screenshot({ path: testInfo.outputPath('amigos-mobile.png'), fullPage: true });
     await bob.setViewportSize({ width: 1440, height: 900 });
 
-    await alice.getByRole('button', { name: 'Conversar' }).click();
-    await bob.getByRole('button', { name: 'Atender' }).click();
+    await contact(alice, 'Rafael').click();
+    await expect(alice.getByRole('heading', { name: 'Rafael' })).toBeVisible();
+    const ciphertext = alice.waitForRequest((req) => req.method() === 'POST' && req.url().endsWith('/messages'));
+    const privateText = 'Recado individual para Rafael.';
+    await send(alice, privateText);
+    const posted = (await ciphertext).postDataJSON();
+    expect(JSON.stringify(posted)).not.toContain(privateText);
+    expect(posted.recipients).toHaveLength(2);
+    await send(alice, 'Segunda mensagem na conversa.');
+    await expect(contact(bob, 'Marina').locator('.nav-count')).toHaveText('2');
+    const friends = await (await alice.request.get('/api/friends')).json();
+    const chatId = friends.find(({ username }) => username === 'rafael').roomId;
+    expect((await carol.request.get('/api/groups/' + chatId + '/messages')).status()).toBe(404);
+    await contact(bob, 'Marina').click();
+    await expect(bob.getByText(privateText)).toBeVisible();
+    await expect(contact(bob, 'Marina').locator('.nav-count')).toHaveCount(0);
+    await send(bob, 'Recebi. Vamos conversar aqui.');
+    await expect(alice.getByText('Recebi. Vamos conversar aqui.')).toBeVisible();
+    await contact(serverBrowser, 'Rafael').click();
+    await expect(serverBrowser.getByText(privateText)).toBeVisible();
+    await alice.getByLabel('Tema').selectOption('dark');
+    await alice.screenshot({ path: testInfo.outputPath('conversa-escura.png') });
+    await alice.getByLabel('Tema').selectOption('light');
+    await alice.screenshot({ path: testInfo.outputPath('conversa-clara.png') });
+    await alice.setViewportSize({ width: 390, height: 844 });
+    await alice.getByRole('button', { name: 'Abrir navegação' }).click();
+    await alice.screenshot({ path: testInfo.outputPath('navegacao-mobile.png') });
+    await alice.getByRole('button', { name: 'Fechar navegação' }).click();
+    await alice.setViewportSize({ width: 1440, height: 900 });
+    await alice.getByRole('button', { name: 'Ligar' }).click();
+    await bob.getByRole('button', { name: 'Atender', exact: true }).click();
     if (!blockedIce) await expect(bob.getByText(mediaPath, { exact: true })).toBeVisible({ timeout: 18_000 });
     await send(alice, 'Mensagem temporária entre amigos.');
     await expect(bob.getByText('Mensagem temporária entre amigos.')).toBeVisible();
@@ -123,15 +155,32 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     }
     await alice.getByRole('button', { name: 'Sair da sala' }).click();
     await bob.getByRole('button', { name: 'Sair da sala' }).click();
-    await expect(alice.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
+    await expect(alice.getByRole('heading', { name: 'Rafael', exact: true })).toBeVisible();
     await alice.getByRole('button', { name: 'Novo grupo', exact: true }).last().click();
     await alice.getByRole('dialog').getByLabel('Nome').fill('Equipe');
     await alice.getByRole('dialog').getByRole('button', { name: 'Criar', exact: true }).click();
     await expect(alice.getByRole('heading', { name: 'Equipe', exact: true })).toBeVisible();
-    await invite(alice, bob, 'member');
+    await alice.getByRole('button', { name: 'Convidar' }).click();
+    await alice.getByRole('combobox', { name: 'Amigo', exact: true }).selectOption({ label: 'Rafael (@rafael)' });
+    await alice.getByRole('button', { name: 'Enviar convite' }).click();
+    await expect(alice.getByText(/Convite enviado/)).toBeVisible();
+    await bob.getByRole('navigation').getByRole('button', { name: /^Atividade/ }).click();
+    await expect(bob.getByRole('heading', { name: 'Convites de grupo' })).toBeVisible();
+    await bob.screenshot({ path: testInfo.outputPath('convite-interno.png') });
+    await bob.getByRole('button', { name: 'Aceitar convite' }).click();
+    await expect(bob.getByRole('heading', { name: 'Equipe', exact: true })).toBeVisible();
+    await bob.getByRole('navigation').getByRole('button', { name: /^Atividade/ }).click();
+    await send(alice, 'Mensagem persistente do grupo.');
+    const bobGroup = bob.getByRole('navigation').getByRole('button', { name: /^Equipe/ });
+    await expect(bobGroup.locator('.nav-count')).toHaveText('1');
+    await bob.screenshot({ path: testInfo.outputPath('grupo-nao-lida.png') });
+    await bobGroup.click();
+    await expect(bob.getByText('Mensagem persistente do grupo.')).toBeVisible();
+    await expect(bobGroup.locator('.nav-count')).toHaveCount(0);
     await invite(alice, carol, 'moderator');
     await newRoom(alice, 'Reunião semanal', 'meet');
     await alice.getByRole('button', { name: 'Sair da sala' }).click();
+    await alice.getByRole('button', { name: /^Salas/ }).last().click();
     await expect(alice.getByRole('heading', { name: 'Salas do grupo' })).toBeVisible();
     const groups = await (await bob.request.get('/api/groups')).json();
     const groupId = groups.find(({ name }) => name === 'Equipe').id;
@@ -144,6 +193,7 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await alice.getByRole('dialog').getByLabel('Nome').fill('Reunião da equipe');
     await alice.getByRole('button', { name: 'Salvar nome' }).click();
     await expect(alice.getByRole('button', { name: 'Entrar em Reunião da equipe' })).toBeVisible();
+    await bob.getByRole('button', { name: /^Salas/ }).last().click();
     await expect(bob.getByRole('button', { name: 'Renomear Reunião da equipe' })).toHaveCount(0);
     await alice.screenshot({ path: testInfo.outputPath('salas-desktop.png') });
     await alice.getByRole('button', { name: 'Entrar em Reunião da equipe' }).click();
@@ -251,7 +301,7 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await owner.getByRole('button', { name: 'Pessoas', exact: true }).click();
     owner.on('dialog', (dialog) => dialog.accept());
     await owner.getByLabel('Gerenciar Rafael').selectOption('ban');
-    await expect(bob.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
+    await expect(bob.getByRole('heading', { name: 'Atividade', exact: true })).toBeVisible();
     await expect(owner.getByLabel('Gerenciar Rafael')).toHaveCount(0);
     await carol.getByRole('button', { name: 'Sair da sala' }).click();
     await expect(carol.getByRole('heading', { name: 'Equipe', exact: true })).toBeVisible();

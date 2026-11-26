@@ -79,9 +79,9 @@ export function Modal({ title, children, close }) {
 const date = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
 export const initials = (value = '') => value.trim().split(/\s+/).slice(0, 2).map((item) => item[0]?.toUpperCase()).join('');
 
-function Message({ item, roster }) {
+function Message({ item, roster, self }) {
   const author = roster.find(({ id }) => id === item.author)?.name ?? item.name ?? 'Participante';
-  return <div className="message">
+  return <div className={'message' + (item.author === self ? ' message-own' : '')}>
     <span className="avatar" aria-hidden="true">{initials(author)}</span>
     <div className="message-content">
       <div className="message-meta"><strong>{author}</strong><time dateTime={new Date(item.created).toISOString()}>{date.format(item.created)}</time></div>
@@ -90,18 +90,20 @@ function Message({ item, roster }) {
   </div>;
 }
 
-export function Conversation({ messages, roster, onSend, busy, label, available, empty }) {
+export function Conversation({ messages, roster, onSend, busy, label, available, empty, before, self }) {
   const scroll = useRef(null);
   const [value, setValue] = useState('');
-  useEffect(() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [messages.length]);
+  const latest = messages.at(-1)?.id;
+  useEffect(() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [latest]);
   async function submit(event) {
     event.preventDefault();
     const outgoing = value.trim();
     if (outgoing && await onSend(outgoing)) setValue('');
   }
   return <>
+    {before}
     <div className="conversation-scroll" ref={scroll} role="log" aria-label={label}>
-      {messages.length ? messages.map((item) => <Message key={item.id} item={item} roster={roster} />)
+      {messages.length ? messages.map((item) => <Message key={item.id} item={item} roster={roster} self={self} />)
         : <div className="chat-empty"><LockKeyhole size={23} /><p>{empty}</p></div>}
     </div>
     <form className="composer" onSubmit={submit}>

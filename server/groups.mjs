@@ -44,17 +44,18 @@ export function groupService(db, hash, onRevoke) {
     requireValue(!role || membership.role === role, 403, 'Você não tem permissão para essa ação.');
     return { group, membership };
   }
-  function invite(token) {
+  function invite(token, accountId) {
     requireValue(encoded(token, 26, 100), 400, 'Convite inválido.');
     const result = db.prepare(`
       SELECT invites.*, groups.chat_mode FROM invites JOIN groups ON groups.id=invites.group_id
-      WHERE invites.hash=? AND invites.expires>?
-    `).get(hash(token), Date.now());
+      LEFT JOIN friend_invites ON friend_invites.hash=invites.hash
+      WHERE invites.hash=? AND invites.expires>? AND (friend_invites.target IS NULL OR friend_invites.target=?)
+    `).get(hash(token), Date.now(), accountId);
     requireValue(result, 404, 'Convite expirado ou já usado.');
     return result;
   }
   function claim(token, groupId, accountId, keyPackage, packageSignature) {
-    const link = invite(token);
+    const link = invite(token, accountId);
     requireValue(link.group_id === groupId, 400, 'Este convite pertence a outro grupo.');
     const previous = member.get(link.group_id, accountId);
     requireValue(!previous || previous.status === 'removed', 409, 'Este grupo já tem uma solicitação ou um vínculo com a conta.');
@@ -181,6 +182,44 @@ export function groupService(db, hash, onRevoke) {
     pending(groupId, accountId) {
       check(groupId, accountId, 'owner');
       return keyList.all(groupId, 'pending');
+    },
+    inviteFriend(groupId, accountId, { target, role }) {
+      const { group } = check(groupId, accountId, 'owner');
+      requireValue(group.chat_mode !== 'contact' && idPattern.test(target) && target !== accountId &&
+        ['member','moderator'].includes(role), 400, 'Convite inválido.');
+      const friendship = db.prepare('SELECT room FROM friendships WHERE first=? AND second=?')
+        .get(...[accountId, target].sort());
+      requireValue(friendship?.room, 404, 'Amizade indisponível.');
+      const previous = member.get(groupId, target);
+      requireValue(!previous || previous.status === 'removed', 409, 'A pessoa já tem um vínculo com este grupo.');
+      return transaction(db, () => {
+        const existing = db.prepare('SELECT hash FROM friend_invites WHERE group_id=? AND target=?').get(groupId, target);
+        if (existing) {
+          const current = db.prepare('SELECT expires FROM invites WHERE hash=?').get(existing.hash);
+          if (current.expires > Date.now()) return {};
+          db.prepare('DELETE FROM invites WHERE hash=?').run(existing.hash);
+        }
+        const { token } = this.issueInvite(groupId, accountId, role);
+        db.prepare('INSERT INTO friend_invites VALUES (?,?,?,?,?)').run(hash(token), token, groupId, accountId, target);
+        return {};
+      });
+    },
+    friendInvites(accountId) {
+      return db.prepare(`
+        SELECT groups.id AS "group", groups.name, groups.chat_mode AS mode, accounts.name AS inviter,
+          CASE WHEN groups.chat_mode='mls' THEN owner.signing END AS owner, friend_invites.token, invites.role
+        FROM friend_invites JOIN invites ON invites.hash=friend_invites.hash
+        JOIN groups ON groups.id=friend_invites.group_id
+        JOIN accounts ON accounts.id=friend_invites.inviter JOIN accounts AS owner ON owner.id=groups.owner
+        WHERE friend_invites.target=? AND invites.expires>?
+        ORDER BY invites.expires DESC
+      `).all(accountId, Date.now());
+    },
+    declineInvite(accountId, token) {
+      requireValue(encoded(token, 32, 32), 400, 'Convite inválido.');
+      db.prepare('DELETE FROM invites WHERE hash IN (SELECT hash FROM friend_invites WHERE target=? AND hash=?)')
+        .run(accountId, hash(token));
+      return {};
     },
     issueInvite(groupId, accountId, role) {
       const { group } = check(groupId, accountId, 'owner');

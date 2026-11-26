@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -154,6 +154,61 @@ test('amizade exige aceite, dá acesso só aos dois participantes e revoga a sal
   assert.equal((await call('friends/action', { id: alice.person.id, action: 'remove' }, bob.cookie)).status, 200);
   assert.equal((await call('groups/' + room + '/ice', undefined, alice.cookie)).status, 404);
   assert.deepEqual(await (await call('friends', undefined, alice.cookie)).json(), []);
+});
+
+test('convite de amigo exige destinatário e o histórico cifrado mantém paginação e leitura monotônica', async (t) => {
+  const { call } = await startApi(t);
+  const alice = await registerForTest(call, 'alice', 'Alice', bootstrap);
+  const bob = await registerForTest(call, 'bob', 'Bob');
+  const carol = await registerForTest(call, 'carol', 'Carolina');
+  await call('friends', { username: 'bob' }, alice.cookie);
+  await call('friends/action', { id: alice.person.id, action: 'accept' }, bob.cookie);
+  const id = randomUUID();
+  assert.equal((await call('groups', { id, name: 'Equipe' }, alice.cookie)).status, 200);
+  const root = 'groups/' + id + '/';
+  const invitation = { role: 'member', target: bob.person.id };
+  assert.equal((await call(root + 'invite-friend', invitation, alice.cookie)).status, 200);
+  assert.equal((await call(root + 'invite-friend', invitation, alice.cookie)).status, 200);
+  const workspace = async (cookie) => (await call('workspace', undefined, cookie)).json();
+  const { invites } = await workspace(bob.cookie);
+  assert.equal(invites.length, 1);
+  assert.deepEqual((await workspace(carol.cookie)).invites, []);
+  const claim = { group: id, token: invites[0].token };
+  assert.equal((await call('claim', claim, carol.cookie)).status, 404);
+  assert.equal((await call('claim', claim, bob.cookie)).status, 200);
+  assert.deepEqual((await workspace(bob.cookie)).invites, []);
+
+  const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const vault = {
+    password, publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'),
+    salt: 'B'.repeat(22), iv: 'C'.repeat(16), wrapped: 'D'.repeat(1630),
+  };
+  assert.equal((await call('chat-key', { ...vault, publicKey: 'A'.repeat(392) }, bob.cookie)).status, 400);
+  assert.equal((await call('chat-key', { ...vault, password: 'incorrect-password' }, bob.cookie)).status, 401);
+  assert.equal((await call('chat-key', vault, alice.cookie)).status, 200);
+  assert.equal((await call('chat-key', vault, bob.cookie)).status, 200);
+  const recipients = [alice, bob].map(({ person }) => ({ id: person.id, wrapped: 'E'.repeat(342) }));
+  const initial = { id: randomUUID(), iv: 'F'.repeat(16), content: 'G'.repeat(50), recipients };
+  assert.equal((await call(root + 'messages', { ...initial, recipients: recipients.slice(0,1) }, alice.cookie)).status, 409);
+  const start = await (await call(root + 'messages', initial, alice.cookie)).json();
+  assert.deepEqual(await (await call(root + 'messages', initial, alice.cookie)).json(), start);
+  for (let index = 0; index < 41; index++) {
+    assert.equal((await call(root + 'messages', { ...initial, id: randomUUID() }, alice.cookie)).status, 200);
+  }
+  assert.equal((await call(root + 'messages', undefined, carol.cookie)).status, 404);
+  const newest = await (await call(root + 'messages', undefined, bob.cookie)).json();
+  const older = await (await call(root + 'messages?before=' + newest.messages[0].seq, undefined, bob.cookie)).json();
+  const catchup = await (await call(root + 'messages?after=' + start.seq, undefined, bob.cookie)).json();
+  assert.equal(newest.more, true);
+  assert.equal(older.messages.length, 2);
+  assert.equal(older.messages[0].content, initial.content);
+  assert.equal(catchup.messages[0].seq, start.seq + 1);
+  assert.equal(catchup.more, true);
+  assert.equal((await workspace(bob.cookie)).groups[0].unread, 42);
+  const seq = newest.messages.at(-1).seq;
+  await call(root + 'read', { seq }, bob.cookie);
+  await call(root + 'read', { seq: start.seq }, bob.cookie);
+  assert.equal((await workspace(bob.cookie)).groups[0].unread, 0);
 });
 
 test('migração mantém os grupos e eventos do SQLite anterior', () => {

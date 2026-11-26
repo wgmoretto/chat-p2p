@@ -2,6 +2,7 @@ import { createIdentity, eventStatement, packageStatement, sign, verify } from '
 import { changeEncryptedGroup, encryptMessage, joinEncryptedGroup, makeKeyPackage,
   readEncryptedEvent, wipeConsumed } from './mls.mjs';
 import { localGet, localSet, request } from './local.mjs';
+import { storedChatKey, unlockChat } from './inbox.mjs';
 
 const accountKey = (username) => 'account/' + username;
 const dataKey = (account, group) => 'group/' + account.id + '/' + group;
@@ -54,27 +55,31 @@ export async function register(form, invite) {
     if (invite) params.invite = await prepareInvite({ id: identity.id, signing: identity.signing }, identity, invite);
     const account = await request('register', params);
     if (invite) history.replaceState(null, '', location.pathname);
-    return { account, identity };
+    const chatKey = await unlockChat(account, form.password).catch(() => null);
+    return { account, identity, chatKey };
   });
 }
 
 export async function login(form) {
   const account = await request('login', { username: form.username, password: form.password });
-  return restore(account);
+  const session = await restore(account);
+  return { ...session, chatKey: session.chatKey ?? await unlockChat(account, form.password).catch(() => null) };
 }
 
 export async function restore(account) {
-  const identity = await localGet(accountKey(account.username)).catch(() => null);
+  const [identity, chatKey] = await Promise.all([
+    localGet(accountKey(account.username)).catch(() => null), storedChatKey(account),
+  ]);
   const matches = identity?.id === account.id && identity.signing === account.signing;
-  return { account, identity: matches ? identity : null };
+  return { account, identity: matches ? identity : null, chatKey };
 }
 
-export async function requestAdmission(session, invite) {
+export async function requestAdmission(session, invite, fromLink = true) {
   const groups = await request('groups');
   if (groups.some(({ id }) => id === invite.group)) throw Error('Esta conta já tem um vínculo com o grupo.');
   const claim = await prepareInvite(session.account, session.identity, invite);
   await request('claim', claim);
-  history.replaceState(null, '', location.pathname);
+  if (fromLink) history.replaceState(null, '', location.pathname);
 }
 
 function draft(group, account, epoch, kind, fields = {}) {
