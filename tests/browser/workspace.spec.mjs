@@ -239,8 +239,14 @@ test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ 
     await contact(serverBrowser, 'Rafael').click();
     await expect(serverBrowser.getByText(privateText)).toBeVisible();
     await serverBrowser.getByLabel('Selecionar arquivo').setInputFiles(file);
-    await expect(serverBrowser.getByText(/Esta conta já abriu a conexão para arquivos em outra aba ou navegador/)).toBeVisible();
-    await serverBrowser.getByRole('button', { name: 'Cancelar anexo' }).click();
+    if (blockedIce) {
+      await serverBrowser.getByRole('button', { name: 'Cancelar anexo' }).click();
+    } else {
+      await bob.getByRole('button', { name: 'Aceitar arquivo' }).click();
+      await expect(serverBrowser.getByText(/Arquivo entregue/)).toBeVisible();
+      await bob.getByRole('button', { name: 'Dispensar' }).click();
+      await expect(clip).toHaveAttribute('data-ready', 'true');
+    }
     await alice.getByLabel('Tema').selectOption('dark');
     await alice.screenshot({ path: testInfo.outputPath('conversa-escura.png') });
     await alice.getByLabel('Tema').selectOption('light');

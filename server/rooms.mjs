@@ -37,14 +37,15 @@ export function attachRooms(server, db, config) {
   }
 
   function elect(room) {
+    if (room.filesOnly) return;
     if (room.host && room.peers.has(room.host)) return;
     room.host = selectHost(room.peers.values());
     room.term++;
   }
 
   function leave(room, peer, reason, code = 1000) {
-    if (room.peers.get(peer.id) !== peer) return;
-    room.peers.delete(peer.id);
+    if (room.peers.get(peer.key) !== peer) return;
+    room.peers.delete(peer.key);
     if (room.publisher === peer.id) room.publisher = null;
     if (room.peers.size === 0) rooms.delete(room.key);
     else {
@@ -55,8 +56,8 @@ export function attachRooms(server, db, config) {
   }
 
   function relay(room, peer, message) {
-    const target = room.peers.get(message.to);
-    if (!target || target === peer || target.instance !== message.toInstance) return;
+    const target = room.peers.get(room.filesOnly ? message.toInstance : message.to);
+    if (!target || target.id !== message.to || target.id === peer.id || target.instance !== message.toInstance) return;
     const envelope = { from: peer.id, fromInstance: peer.instance };
     if (message.type === 'sdp') {
       const { description, signature, counter } = message;
@@ -198,25 +199,22 @@ export function attachRooms(server, db, config) {
           restrictions: new Map(), excluded: new Set() };
         rooms.set(key, room);
       }
-      if (filesOnly && room.peers.has(account.id)) {
-        ws.close(4003, 'Esta conta já abriu a conexão para arquivos em outra aba ou navegador.');
-        return;
-      }
-      const capacity = room.chat_mode === 'contact' ? 2 : limits[room.mode];
-      if (room.excluded.has(account.id) || room.peers.has(account.id) || room.peers.size >= capacity) {
+      const peerKey = filesOnly ? instance : account.id;
+      const capacity = filesOnly ? 16 : room.chat_mode === 'contact' ? 2 : limits[room.mode];
+      if (room.excluded.has(account.id) || room.peers.has(peerKey) || room.peers.size >= capacity) {
         ws.close(4003, 'Sala cheia, acesso revogado ou conta já conectada.');
         return;
       }
       const now = Date.now();
-      const peer = { id: account.id, instance, name: account.name, signing, chatKey, chatProof,
+      const peer = { key: peerKey, id: account.id, instance, name: account.name, signing, chatKey, chatProof,
         socket: ws, expires: account.expires, session: account.session,
         role: membership.role, lastPong: now, joinedAt: now, windowStart: now, messageCount: 0 };
-      room.peers.set(peer.id, peer);
+      room.peers.set(peer.key, peer);
       elect(room);
       ws.on('pong', () => { peer.lastPong = Date.now(); });
       ws.on('close', () => leave(room, peer, 'Saiu da sala.'));
       ws.on('message', (raw) => {
-        if (room.peers.get(peer.id) !== peer) return;
+        if (room.peers.get(peer.key) !== peer) return;
         try { receive(room, peer, raw); }
         catch (error) {
           console.error('room action failed', error);
@@ -248,8 +246,10 @@ export function attachRooms(server, db, config) {
     },
     revoke(groupId, accountId) {
       for (const room of rooms.values()) {
-        const peer = room.peers.get(accountId);
-        if (peer && room.group_id === groupId) leave(room, peer, 'Acesso ao grupo revogado.', 4003);
+        if (room.group_id !== groupId) continue;
+        for (const peer of room.peers.values()) {
+          if (peer.id === accountId) leave(room, peer, 'Acesso ao grupo revogado.', 4003);
+        }
       }
     },
     endSession(session) {

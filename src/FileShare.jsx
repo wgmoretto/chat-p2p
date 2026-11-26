@@ -48,20 +48,43 @@ export function useFileShare(id, session) {
     setState(initialState);
     setConnection(initialConnection);
     const cancellation = new AbortController();
-    const files = new FileTransfer(setState);
+    const channels = new Set();
+    function bind(channel) {
+      const files = new FileTransfer((snapshot) => {
+        const active = transfer.current;
+        if (active !== files && files.job && (active?.job || active?.download)) {
+          files.decline();
+          return;
+        }
+        if (files.job || files.download || !active || active === files || (!active.ready && !active.job && !active.download)) {
+          transfer.current = files;
+          if (!files.ready && !files.job && !files.download) {
+            const fallback = [...channels].find((other) => other.ready);
+            if (fallback) {
+              transfer.current = fallback;
+              fallback.publish();
+              return;
+            }
+          }
+          setState(snapshot);
+        }
+      });
+      channels.add(files);
+      channel.addEventListener('close', () => channels.delete(files), { once: true });
+      files.bind(channel);
+    }
     const fail = (error) => {
       if (!cancellation.signal.aborted) setConnection((current) => ({ ...current, error: error.message }));
     };
     const room = new RoomConnection({ id, mode: 'files' }, { chat_mode: 'contact' }, session, null,
-      (value) => setConnection((current) => ({ ...current, ...value })), fail, (channel) => files.bind(channel));
-    transfer.current = files;
+      (value) => setConnection((current) => ({ ...current, ...value })), fail, bind);
     request('groups/' + id + '/ice', undefined, { signal: cancellation.signal })
       .then((ice) => room.connect(ice))
       .catch(fail);
     return () => {
       cancellation.abort();
       transfer.current = null;
-      files.close();
+      for (const files of channels) files.close();
       room.onState = () => {};
       room.close();
     };

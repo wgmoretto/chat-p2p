@@ -329,7 +329,7 @@ export class RoomConnection {
   }
 
   reconcile() {
-    const admitted = new Map(this.map.filter((item) => this.trustedMember(item)).map((item) => [item.id, item]));
+    const admitted = new Map(this.map.filter((item) => this.trustedMember(item)).map((item) => [this.filesOnly ? item.instance : item.id, item]));
     for (const [id, peer] of this.peers) {
       const member = admitted.get(id);
       if (!member || member.instance !== peer.member.instance || member.signing !== peer.member.signing || member.chatKey !== peer.member.chatKey) {
@@ -338,7 +338,7 @@ export class RoomConnection {
       }
     }
     for (const [id, member] of admitted) {
-      if (!this.peers.has(id) && id !== this.self.id) this.peers.set(id, new Peer(this, member));
+      if (!this.peers.has(id) && member.id !== this.self.id) this.peers.set(id, new Peer(this, member));
     }
   }
 
@@ -369,7 +369,7 @@ export class RoomConnection {
       await this.refreshTracks();
       return;
     }
-    const peer = this.peers.get(event.from);
+    const peer = this.peers.get(this.filesOnly ? event.fromInstance : event.from);
     if (!peer && this.roster && this.unverified.length < 100 && ['ice','sdp','chat','media'].includes(event.type) &&
         this.map.some(({ id, instance }) => event.from === id && event.fromInstance === instance)) {
       this.unverified.push(event);
