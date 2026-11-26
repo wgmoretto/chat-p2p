@@ -1,4 +1,4 @@
-import { descriptionStatement, sign, verify } from '../shared/crypto.mjs';
+import { createIdentity, descriptionStatement, sign, verify } from '../shared/crypto.mjs';
 
 const mediaOrder = ['mic','camera','screen'];
 const profiles = {
@@ -112,7 +112,7 @@ class Peer {
     const description = { type: raw.type, sdp: raw.sdp };
     const counter = ++this.counter;
     const values = descriptionStatement(this.room.id, this.room.self, this.member, counter, description);
-    const signature = await sign(this.room.session.identity.privateKey, values);
+    const signature = await sign(this.room.device.privateKey, values);
     this.send({ type: 'sdp', description, counter, signature });
   }
 
@@ -166,8 +166,7 @@ export class RoomConnection {
   constructor(room, group, session, roster, onState, onError) {
     this.id = room.id;
     this.mode = room.mode;
-    this.group = group.id;
-    this.session = session;
+    this.device = group.chat_mode === 'mls' ? session.identity : null;
     this.roster = roster;
     this.onState = onState;
     this.onError = onError;
@@ -184,6 +183,7 @@ export class RoomConnection {
   }
 
   async connect(ice) {
+    this.device ??= await createIdentity();
     if (this.closed) return;
     this.configuration = {
       iceServers: ice.iceServers,
@@ -192,7 +192,7 @@ export class RoomConnection {
     this.ice = ice;
     const url = new URL('/signal', location.origin);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.search = new URLSearchParams({ room: this.id, instance: this.instance }).toString();
+    url.search = new URLSearchParams({ room: this.id, instance: this.instance, signing: this.device.signing }).toString();
     this.socket = new WebSocket(url);
     this.socket.onmessage = ({ data }) => {
       this.incoming = this.incoming.then(() => this.receive(JSON.parse(data))).catch((error) => this.report(error));
@@ -233,12 +233,16 @@ export class RoomConnection {
     this.render();
   }
 
+  trustedMember(summary) {
+    if (!this.roster) return summary;
+    return this.roster.find(({ id, signing }) => id === summary.id && signing === summary.signing);
+  }
+
   reconcile() {
-    const admitted = new Map(this.map.filter((item) => this.roster.some((entry) => entry.id === item.id))
-      .map((item) => [item.id, item]));
+    const admitted = new Map(this.map.filter((item) => this.trustedMember(item)).map((item) => [item.id, item]));
     for (const [id, peer] of this.peers) {
       const member = admitted.get(id);
-      if (!member || member.instance !== peer.member.instance) {
+      if (!member || member.instance !== peer.member.instance || member.signing !== peer.member.signing) {
         peer.close();
         this.peers.delete(id);
       }
@@ -276,15 +280,14 @@ export class RoomConnection {
       return;
     }
     const peer = this.peers.get(event.from);
-    const account = this.roster.find(({ id }) => id === event.from);
-    if (!account && this.unverified.length < 100 && ['ice','sdp'].includes(event.type) &&
+    if (!peer && this.roster && this.unverified.length < 100 && ['ice','sdp'].includes(event.type) &&
         this.map.some(({ id, instance }) => event.from === id && event.fromInstance === instance)) {
       this.unverified.push(event);
       return;
     }
-    if (!peer || !account || peer.member.instance !== event.fromInstance) return;
+    if (!peer || peer.member.instance !== event.fromInstance) return;
     if (event.type === 'ice') await peer.ice(event.candidate);
-    if (event.type === 'sdp') await peer.description(event, account.signing);
+    if (event.type === 'sdp') await peer.description(event, peer.member.signing);
   }
 
   stopLocal(kind) {
@@ -342,7 +345,9 @@ export class RoomConnection {
   }
 
   message(author, text) {
-    this.messages = [...this.messages, { author, text, id: crypto.randomUUID(), created: Date.now() }].slice(-300);
+    const participant = this.map.find(({ id }) => id === author);
+    const name = participant && this.trustedMember(participant)?.name;
+    this.messages = [...this.messages, { author, name, text, id: crypto.randomUUID(), created: Date.now() }].slice(-300);
     this.render();
   }
 
@@ -382,7 +387,7 @@ export class RoomConnection {
 
   render() {
     const people = this.map.flatMap((policy) => {
-      const account = this.roster.find(({ id }) => id === policy.id);
+      const account = this.trustedMember(policy);
       if (!account) return [];
       const self = account.id === this.self.id;
       const peer = this.peers.get(account.id);
@@ -392,7 +397,7 @@ export class RoomConnection {
         const stream = allowed && !isBlocked && (self ? this.local[kind].stream : peer?.announced[kind] && peer.tracks[kind].stream);
         return [kind, stream || null];
       }));
-      return [{ ...account, ...policy, self, media }];
+      return [{ ...policy, name: account.name, self, media }];
     });
     this.onState({ people, host: this.state?.host, term: this.state?.term, publisher: this.state?.publisher,
       status: this.status, path: this.path, canPublish: this.canPublish, policy: this.personalPolicy,

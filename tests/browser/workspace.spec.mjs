@@ -1,13 +1,13 @@
 import { test, expect } from '@playwright/test';
 
 async function account(page, name, username, bootstrap = false) {
-  await page.getByLabel('Nome', { exact: true }).fill(name);
+  await page.getByLabel('Nome (opcional)', { exact: true }).fill(name);
   await page.getByLabel('Usuário').fill(username);
   await page.getByLabel('Senha').fill('senha-para-teste-e2e');
   if (bootstrap) await page.getByLabel('Código de instalação').fill('local-browser-test-bootstrap-key');
   await page.getByRole('button', { name: 'Criar conta', exact: true }).click();
 }
-async function invite(owner, visitor, name, username, role) {
+async function invite(owner, visitor, role) {
   await owner.getByRole('button', { name: 'Convidar' }).click();
   await owner.getByLabel('Papel').selectOption(role);
   await owner.getByRole('button', { name: 'Gerar convite' }).click();
@@ -16,11 +16,8 @@ async function invite(owner, visitor, name, username, role) {
   const link = await invite.inputValue();
   await owner.getByRole('dialog').getByRole('button', { name: 'Fechar' }).click();
   await visitor.goto(link);
-  await account(visitor, name, username);
-  await expect(visitor.getByRole('heading', { name: 'Aguardando aprovação' })).toBeVisible();
-  await owner.getByRole('button', { name: /^Pessoas/ }).click();
-  await owner.getByRole('button', { name: 'Aprovar' }).click();
-  await expect(visitor.getByRole('button', { name: 'Chat do grupo' })).toBeVisible();
+  await visitor.getByRole('button', { name: 'Solicitar entrada' }).click();
+  await expect(visitor.getByRole('heading', { name: 'Equipe', exact: true })).toBeVisible();
 }
 async function send(page, text) {
   await page.getByLabel('Mensagem', { exact: true }).fill(text);
@@ -40,7 +37,7 @@ async function newRoom(page, name, mode) {
 }
 const navRoom = (page, name) => page.getByRole('navigation').getByRole('button', { name, exact: true });
 
-test('convite MLS, reunião P2P, troca de host, live e banimento', async ({ browser }, testInfo) => {
+test('login no segundo navegador, amigos, reunião P2P e moderação', async ({ browser }, testInfo) => {
   const contexts = await Promise.all(Array.from({ length: 4 }, () => browser.newContext()));
   try {
     const [alice, bob, carol, serverBrowser] = await Promise.all(contexts.map((ctx) => ctx.newPage()));
@@ -48,35 +45,48 @@ test('convite MLS, reunião P2P, troca de host, live e banimento', async ({ brow
     for (const page of [alice, bob, carol]) page.on('pageerror', (error) => faults.push(error.message));
     await serverBrowser.goto('/');
     await account(serverBrowser, 'Marina', 'marina', true);
-    await expect(serverBrowser.getByRole('heading', { name: 'Seus grupos' })).toBeVisible();
+    await expect(serverBrowser.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
 
     await alice.goto('/');
     await alice.getByLabel('Usuário').fill('marina');
     await alice.getByLabel('Senha').fill('senha-para-teste-e2e');
     await alice.getByRole('button', { name: 'Entrar', exact: true }).click();
-    await expect(alice.getByRole('alert')).toContainText('As chaves desta conta não estão neste navegador.');
-    await alice.getByRole('button', { name: 'Vincular este navegador' }).click();
-    await alice.getByLabel('Usuário').fill('marina');
-    await alice.getByLabel('Senha').fill('senha-para-teste-e2e');
-    await alice.getByLabel('Código de recuperação').fill('local-only-test-browser-recovery-code');
-    await alice.getByRole('button', { name: 'Vincular navegador' }).click();
-    await expect(alice.getByRole('heading', { name: 'Seus grupos' })).toBeVisible();
-    await expect(serverBrowser.getByRole('heading', { name: 'Entrar no Chat P2P' })).toBeVisible();
+    await expect(alice.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
     await alice.reload();
-    await expect(alice.getByRole('heading', { name: 'Seus grupos' })).toBeVisible();
+    await expect(alice.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
+    for (const [page, name, handle] of [[bob, 'Rafael', 'rafael'], [carol, 'Carolina', 'carolina']]) {
+      await page.goto('/');
+      await page.getByRole('button', { name: 'Criar conta', exact: true }).click();
+      await account(page, name, handle);
+      await expect(page.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
+    }
+
+    await alice.getByLabel('Adicionar pelo @usuário').fill('@rafael');
+    await alice.getByRole('button', { name: 'Enviar pedido' }).click();
+    await expect(alice.getByRole('heading', { name: 'Pedidos enviados' })).toBeVisible();
+    await bob.getByRole('button', { name: 'Aceitar', exact: true }).click();
+    await expect(alice.getByRole('button', { name: 'Conversar' })).toBeVisible();
+    await alice.screenshot({ path: testInfo.outputPath('amigos-desktop.png') });
+    await bob.setViewportSize({ width: 390, height: 844 });
+    expect(await bob.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    expect(await bob.locator('.sidebar').evaluate((element) => element.offsetHeight)).toBeLessThan(230);
+    await bob.screenshot({ path: testInfo.outputPath('amigos-mobile.png'), fullPage: true });
+    await bob.setViewportSize({ width: 1440, height: 900 });
+
+    await alice.getByRole('button', { name: 'Conversar' }).click();
+    await bob.getByRole('button', { name: 'Atender' }).click();
+    await expect(bob.getByText('Direta', { exact: true })).toBeVisible({ timeout: 18_000 });
+    await send(alice, 'Mensagem temporária entre amigos.');
+    await expect(bob.getByText('Mensagem temporária entre amigos.')).toBeVisible();
+    await alice.getByRole('button', { name: 'Sair da sala' }).click();
+    await bob.getByRole('button', { name: 'Sair da sala' }).click();
+    await expect(alice.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
     await alice.getByRole('button', { name: 'Novo grupo', exact: true }).last().click();
     await alice.getByRole('dialog').getByLabel('Nome').fill('Equipe');
     await alice.getByRole('dialog').getByRole('button', { name: 'Criar', exact: true }).click();
-    await expect(alice.getByRole('button', { name: 'Chat do grupo' })).toBeVisible();
-    await send(alice, 'Mensagem anterior ao convite');
-    await invite(alice, bob, 'Rafael', 'rafael', 'member');
-    await invite(alice, carol, 'Carolina', 'carolina', 'moderator');
-    await alice.getByRole('button', { name: 'Chat do grupo' }).click();
-    await send(alice, 'Recado privado para a equipe');
-    await expect(bob.getByText('Recado privado para a equipe')).toBeVisible();
-    await expect(bob.getByText('Mensagem anterior ao convite')).toHaveCount(0);
-    await bob.reload();
-    await expect(bob.getByText('Recado privado para a equipe')).toBeVisible();
+    await expect(alice.getByRole('heading', { name: 'Equipe', exact: true })).toBeVisible();
+    await invite(alice, bob, 'member');
+    await invite(alice, carol, 'moderator');
     await newRoom(alice, 'Reunião semanal', 'meet');
     await navRoom(bob, 'Reunião semanal').click();
     await expect(bob.getByText('Direta', { exact: true })).toBeVisible({ timeout: 18_000 });
@@ -137,15 +147,13 @@ test('convite MLS, reunião P2P, troca de host, live e banimento', async ({ brow
 
     const owner = await contexts[0].newPage();
     await owner.goto('/');
-    await owner.getByRole('button', { name: /^Pessoas/ }).click();
+    await owner.getByRole('navigation').getByRole('button', { name: 'Equipe', exact: true }).click();
     owner.on('dialog', (dialog) => dialog.accept());
     await owner.getByLabel('Gerenciar Rafael').selectOption('ban');
-    await expect(bob.getByRole('heading', { name: 'Seus grupos' })).toBeVisible();
+    await expect(bob.getByRole('heading', { name: 'Amigos', exact: true })).toBeVisible();
     await expect(owner.getByLabel('Gerenciar Rafael')).toHaveCount(0);
-    await owner.getByRole('button', { name: 'Chat do grupo' }).click();
-    await send(owner, 'Mensagem após o banimento');
     await carol.getByRole('button', { name: 'Sair da sala' }).click();
-    await expect(carol.getByText('Mensagem após o banimento')).toBeVisible();
+    await expect(carol.getByRole('heading', { name: 'Equipe', exact: true })).toBeVisible();
     expect(faults).toEqual([]);
   } finally {
     await Promise.all(contexts.map((context) => context.close()));

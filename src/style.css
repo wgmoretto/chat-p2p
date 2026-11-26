@@ -55,6 +55,7 @@ ul { list-style: none; padding: 0; margin: 0; }
 .nav-item[aria-current] { background: var(--accent); color: white; font-weight: 700; }
 .nav-item[aria-current]:hover { background: var(--accent-dark); }
 .nav-empty { margin: 8px 7px 15px; font-size: .88rem; color: var(--muted); }
+.nav-item .nav-count { margin-left: auto; padding: 1px 6px; border-radius: 12px; background: #cde6d7; color: #104832; font-size: .76rem; }
 .account { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 9px; border-top: 1px solid #bdd2c5; padding: 14px 4px 0; margin-top: 22px; }
 .account strong, .account small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .avatar { min-width: 35px; height: 35px; display: inline-grid; place-items: center; border-radius: 50%; background: #cce2d3; color: #104832; padding: 0 7px; font-weight: 750; font-size: .82rem; }
@@ -89,6 +90,7 @@ ul { list-style: none; padding: 0; margin: 0; }
 .thumbnails .tile-avatar { width: 49px; font-size: 1.25rem; }
 .stage-empty { display: grid; justify-items: center; gap: 9px; text-align: center; color: #e2eee6; }
 .stage-empty small { color: #c5d7cc; }
+.call-waiting { position: absolute; inset: 16px auto auto 16px; font-size: .86rem; }
 .meeting-controls { display: flex; flex-wrap: wrap; gap: 7px; }
 .meeting-controls button { padding-inline: 10px; min-height: 43px; color: #123d2e; border-color: #739d8c; font-size: .93rem; }
 .meeting-controls button[aria-pressed=true] { background: #cce7da; border-color: #33795e; }
@@ -118,6 +120,12 @@ ul { list-style: none; padding: 0; margin: 0; }
 .person-label { display: grid; min-width: 0; overflow-wrap: anywhere; }
 .person-label small { font-size: .77rem; }
 .privacy { display: flex; align-items: center; gap: 7px; margin-top: 15px; color: var(--muted); font-size: .89rem; }
+.friends-panel { border: 1px solid var(--border); border-radius: 15px; background: var(--surface); max-width: 850px; }
+.friend-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 16px; border-bottom: 1px solid var(--border); }
+.friend-actions { display: flex; justify-content: end; gap: 6px; flex-wrap: wrap; }
+.friend-actions button { min-height: 36px; padding: 5px 9px; font-size: .86rem; }
+.friends-list .muted, .group-hint { padding: 9px 0; font-size: .92rem; }
+.group-hint { margin-inline: 14px; }
 .notice, .warning-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; border-radius: 9px; padding: 9px 12px; }
 .notice { background: #dceee4; }
 .error { color: #811c20; padding: 9px 12px; border: 1px solid #d3999d; border-radius: 8px; background: #fff3f3; overflow-wrap: anywhere; }
@@ -136,6 +144,7 @@ ul { list-style: none; padding: 0; margin: 0; }
 .access-panel { display: grid; align-items: center; padding: clamp(22px, 6vw, 95px); }
 .access-form { max-width: 440px; width: 100%; margin: 0 auto; }
 .access-form > p { margin: 10px 0 20px; }
+.access-form > h2 + form { margin-top: 22px; }
 .access-form .text-button { margin-top: 13px; }
 .access-form .wide { width: 100%; justify-content: space-between; }
 .startup { padding: 24px; }
@@ -148,6 +157,7 @@ ul { list-style: none; padding: 0; margin: 0; }
 }
 @media (max-width: 620px) {
   .access, .workspace { grid-template-columns: minmax(0, 1fr); }
+  .workspace { grid-template-rows: auto 1fr; }
   .access-intro { gap: 16px; padding: 21px; }
   .access-intro h1 { font-size: 2.5rem; max-width: 400px; }
   .access-intro div p { margin-top: 9px; }
@@ -168,5 +178,9 @@ ul { list-style: none; padding: 0; margin: 0; }
   .stage { min-height: 310px; }
   .tile { min-height: 84px; }
   .header-actions { flex-wrap: wrap; }
+  .friend-form { grid-template-columns: minmax(0, 1fr); }
+  .friend-actions { grid-column: 2 / -1; justify-content: start; }
+  .call-waiting { position: static; text-align: center; }
+
   .meeting-controls button { flex: 1 1 auto; }
 }

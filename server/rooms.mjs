@@ -19,7 +19,7 @@ export function attachRooms(server, db, config) {
   const rooms = new Map();
   let stopped = false;
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 85_000, perMessageDeflate: false });
-  const roomLookup = db.prepare('SELECT * FROM rooms WHERE id=?');
+  const roomLookup = db.prepare('SELECT rooms.*, groups.chat_mode FROM rooms JOIN groups ON groups.id=rooms.group_id WHERE rooms.id=?');
   const record = db.prepare('INSERT INTO actions (room,actor,target,action,created) VALUES (?,?,?,?,?)');
   const send = (peer, data) => {
     if (peer.socket.readyState === OPEN && peer.socket.bufferedAmount < 256_000) peer.socket.send(JSON.stringify(data));
@@ -29,8 +29,8 @@ export function attachRooms(server, db, config) {
   function publish(room) {
     const message = { type: 'room', room: room.id, host: room.host, term: room.term,
       publisher: room.publisher,
-      peers: [...room.peers.values()].map(({ id, instance, role }) => ({
-        id, instance, role, ...room.restrictions.get(id),
+      peers: [...room.peers.values()].map(({ id, instance, role, name, signing }) => ({
+        id, instance, role, name, signing, ...room.restrictions.get(id),
       })),
     };
     for (const peer of room.peers.values()) send(peer, message);
@@ -159,8 +159,9 @@ export function attachRooms(server, db, config) {
     const id = url.searchParams.get('room');
     const instance = url.searchParams.get('instance');
     const account = config.authenticate(req);
+    const signing = url.searchParams.get('signing') ?? account?.signing;
     if (url.pathname !== '/signal' || req.headers.origin !== config.origin || !idPattern.test(id) ||
-        !idPattern.test(instance) || !account) {
+        !idPattern.test(instance) || !account || !encoded(signing, 110, 140)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return;
     }
@@ -168,7 +169,7 @@ export function attachRooms(server, db, config) {
       ws.on('error', () => {});
       const profile = roomLookup.get(id);
       const membership = profile && config.member.get(profile.group_id, account.id);
-      if (!profile || membership?.status !== 'active') {
+      if (!profile || membership?.status !== 'active' || (profile.chat_mode === 'mls' && signing !== account.signing)) {
         ws.close(4003, 'Sala indisponível.');
         return;
       }
@@ -178,12 +179,13 @@ export function attachRooms(server, db, config) {
           restrictions: new Map(), excluded: new Set() };
         rooms.set(id, room);
       }
-      if (room.excluded.has(account.id) || room.peers.has(account.id) || room.peers.size >= limits[room.mode]) {
+      const capacity = room.chat_mode === 'contact' ? 2 : limits[room.mode];
+      if (room.excluded.has(account.id) || room.peers.has(account.id) || room.peers.size >= capacity) {
         ws.close(4003, 'Sala cheia, acesso revogado ou conta já conectada.');
         return;
       }
       const now = Date.now();
-      const peer = { id: account.id, instance, socket: ws, expires: account.expires, session: account.session,
+      const peer = { id: account.id, instance, name: account.name, signing, socket: ws, expires: account.expires, session: account.session,
         role: membership.role, lastPong: now, joinedAt: now, windowStart: now, messageCount: 0 };
       room.peers.set(peer.id, peer);
       elect(room);
@@ -216,6 +218,10 @@ export function attachRooms(server, db, config) {
   timer.unref();
 
   return {
+    occupied(roomId, viewer) {
+      const room = rooms.get(roomId);
+      return room ? [...room.peers.values()].some((peer) => peer.id !== viewer && peer.socket.readyState === OPEN) : false;
+    },
     revoke(groupId, accountId) {
       for (const room of rooms.values()) {
         const peer = room.peers.get(accountId);

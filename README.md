@@ -1,6 +1,6 @@
 # Chat P2P
 
-Piloto open source de chat interno, reuniões, compartilhamento de tela, lives e moderação. O servidor coordena acesso, sinalização, chat de grupo e sucessão de host. Os navegadores trocam áudio, vídeo e chat da sala por WebRTC, diretamente ou pelo coturn.
+Piloto open source de chat interno, reuniões, compartilhamento de tela, lives e moderação. O servidor coordena login, amizades, sinalização e sucessão de host. Os navegadores trocam áudio, vídeo e chat da sala por WebRTC, diretamente ou pelo coturn.
 
 ## Rodar no Windows
 
@@ -16,11 +16,11 @@ npm.cmd start
 ```
 
 1. Abra [http://localhost:3000](http://localhost:3000). Crie a primeira conta com o código de instalação. A senha precisa ter ao menos 12 caracteres.
-2. Crie um grupo e clique em **Convidar**. Abra o convite em outro perfil de navegador. Crie uma segunda conta, volte à aba **Pessoas** do dono e aprove o dispositivo.
-3. Crie uma sala do tipo **Reunião** e entre nas duas contas. Use **Microfone**, **Câmera** ou **Compartilhar tela** para publicar.
-4. Crie uma sala do tipo **Live**. Um membro pode iniciar uma transmissão e publicar câmera ou tela. Durante uma live, apenas esse membro pode publicar mídia.
+2. Após a configuração inicial, cada pessoa pode criar uma conta com usuário e senha. A mesma conta pode entrar em outro perfil ou dispositivo.
+3. Em **Amigos**, adicione alguém pelo `@usuário` e aguarde o aceite. Clique em **Conversar**. O outro participante verá **Atender** e poderá entrar. O chat existe durante a sessão.
+4. Para mais pessoas, crie um grupo privado, compartilhe o convite e abra uma sala do tipo **Reunião** ou **Live**. Use **Microfone**, **Câmera** e **Compartilhar tela** para publicar. Em uma live, um participante transmite por vez.
 
-Use o mesmo perfil de navegador para voltar à conta. As chaves do dispositivo e o histórico já decifrado vivem no armazenamento do navegador. Limpar esses dados, usar um perfil temporário ou mudar de endereço perde o acesso às chaves. Contas com participação em grupos precisam do perfil de origem. A primeira conta, enquanto a instalação ainda não tiver grupos, pode ser vinculada a outro navegador pelo procedimento abaixo. O arquivo SQLite local fica em `data/chat.sqlite`.
+O SQLite local fica em `data/chat.sqlite` e guarda contas, amizades e grupos. O login e as amizades são independentes das chaves de um navegador.
 
 ## Publicar no Easypanel
 
@@ -32,7 +32,6 @@ Use o mesmo perfil de navegador para voltar à conta. As chaves do dispositivo e
 | --- | --- |
 | `PUBLIC_ORIGIN` | Origem HTTPS da aplicação, por exemplo `https://chat.seudominio.com`. |
 | `BOOTSTRAP_TOKEN` | Segredo para cadastrar a primeira conta. Pode ser retirado após o cadastro. |
-| `SETUP_RECOVERY_TOKEN` | Código de uso único para vincular a primeira conta a outro navegador antes de criar grupos. Deixe vazio após usar. |
 | `TURN_SECRET` | Segredo compartilhado entre a API e o coturn para emitir credenciais temporárias. |
 | `TURN_REALM` | Hostname do TURN, por exemplo `turn.seudominio.com`. |
 | `TURN_EXTERNAL_IP` | IPv4 público anunciado pelo coturn. |
@@ -43,31 +42,27 @@ Use o mesmo perfil de navegador para voltar à conta. As chaves do dispositivo e
 | `TRUST_PROXY` | `1` atrás do proxy do Easypanel, que controla o cabeçalho de encaminhamento. Use `0` se executar a aplicação diretamente. |
 
 4. Aponte o DNS de `turn.seudominio.com` diretamente para o IP público. Abra `3478/TCP`, `3478/UDP` e `49160–49200/UDP` no firewall do servidor e do provedor. O Compose reserva essas portas. Se o VPS estiver atrás de NAT, encaminhe cada porta de relay para o mesmo número interno. [Contêiner coturn](https://github.com/coturn/coturn/blob/master/docker/coturn/README.md)
-5. Acesse `/healthz` pela URL da aplicação e repita a reunião com duas redes externas. Verifique o indicador **Direta**, redeploy com `FORCE_TURN=1` e confirme **Relay TURN** com áudio e tela. Volte para `0` e confirme que o histórico persiste após o redeploy.
+5. Acesse `/healthz` pela URL da aplicação e repita a reunião com duas redes externas. Verifique o indicador **Direta**, redeploy com `FORCE_TURN=1` e confirme **Relay TURN** com áudio e tela. Volte para `0` e confirme que contas, amizades e grupos persistem após o redeploy.
 
 O Compose publica TURN em UDP e TCP. Algumas redes exigem TURN/TLS, que precisa de certificado e porta próprios no coturn. WebRTC mantém o conteúdo cifrado entre os clientes também quando o relay usa TCP. Para usar um TURN separado, configure o mesmo segredo no relay externo e na API, informe as URLs públicas na API e remova o serviço `coturn` da configuração de deploy.
 
 Para hospedar em um Windows Server, use a mesma configuração em uma VM Linux com Hyper-V. Configure o HTTPS da aplicação na VM e o acesso externo às portas do coturn. Para backup do servidor, use um backup consistente do SQLite, incluindo o WAL quando aplicável, e teste a restauração. As chaves privadas do navegador não fazem parte desse backup.
 
-## Vincular a primeira conta a outro navegador
+## Atualizar uma instalação existente
 
-Este procedimento serve quando a primeira conta foi criada no servidor, em outro navegador ou em um endereço como `localhost`, e ainda não há grupos na instalação.
+Faça o redeploy a partir da `main` preservando o volume `chat-data`. Entre com o usuário e a senha que você já usa. Contas e grupos existentes são preservados. As chaves dos grupos MLS antigos ficam no perfil e no endereço usados antes da atualização. Use esse navegador para abrir as salas e ler o histórico desses grupos.
 
-1. Em um terminal, gere um código com `node -p "require('node:crypto').randomBytes(32).toString('hex')"`.
-2. No serviço Compose do Easypanel, configure `SETUP_RECOVERY_TOKEN` com esse código. Redeploy preservando o volume `chat-data`.
-3. No navegador que você vai usar, abra a URL HTTPS pública da aplicação. Em **Vincular este navegador**, informe o usuário e a senha existentes e o código de recuperação.
-4. Após entrar, retire `SETUP_RECOVERY_TOKEN` das variáveis no Easypanel. O código já usado perde a validade, e as sessões anteriores da conta são encerradas.
-
-O procedimento mantém o usuário e a senha, gera uma chave no novo navegador e funciona enquanto a instalação tiver somente a primeira conta e nenhuma participação em grupos. Crie os grupos depois de vincular o navegador definitivo.
+O código de instalação continua reservado à criação da primeira conta em um banco vazio. As contas seguintes podem se cadastrar e enviar pedidos sem um convite de grupo. Pedidos dependem de aceite e grupos seguem privados.
 
 ## Comportamento do piloto
 
-- **Grupos privados** com até 32 membros, convites de uso único, aprovação pelo dono e histórico offline cifrado com MLS. O novo membro recebe mensagens posteriores à aprovação.
+- **Amizades** por `@usuário`, com pedido e aceite. Cada dupla tem uma conversa privada temporária e pode fazer uma chamada com áudio, câmera e tela.
+- **Grupos privados** com até 32 membros e convites de uso único. Nos novos grupos, o chat acontece nas salas e dura a sessão. Os grupos MLS existentes mantêm seu histórico e suas chaves locais.
 - **Reuniões** com até quatro pessoas. Microfone, câmera e tela usam conexões WebRTC independentes do host da sessão. O chat da sala é temporário e usa DataChannel.
 - **Lives** de um transmissor e até quatro espectadores. Qualidade máxima selecionável de 480p, 720p ou 1080p. O transmissor envia por espectador e o WebRTC adapta os envios ao congestionamento. A resolução real depende do dispositivo, da captura e da rede.
 - **Host** inicial é quem abre a sessão. Na saída ou expiração do heartbeat, o servidor elege o melhor candidato disponível e incrementa o mandato. Quem retorna entra como participante. O transmissor pode ser outra pessoa. Quando o transmissor sai, alguém na sala pode iniciar uma nova transmissão.
-- **Moderação** com papéis de dono, moderador e membro. Na sessão, dono e moderadores podem controlar publicação e expulsar conforme o papel. O dono controla associação e banimento do grupo e autoriza a mudança de época MLS. Ações de sala são registradas no SQLite.
-- **Criptografia** — o cliente assina a negociação SDP com a chave do dispositivo, incluindo sala, remetente, destinatário e instâncias. O convite inclui a chave do dono e precisa ser compartilhado por um canal confiável. O servidor ainda vê presença, identidade, permissões, horários e sinalização. A origem HTTPS que entrega o JavaScript e os dispositivos participantes fazem parte da fronteira de confiança. O pacote `ts-mls` ainda não informa auditoria independente. Valide o desenho de segurança antes de usar com informação sensível. [WebRTC RFC 8827](https://www.rfc-editor.org/rfc/rfc8827.html) · [MLS RFC 9420](https://www.rfc-editor.org/rfc/rfc9420.html) · [ts-mls](https://github.com/LukaJCB/ts-mls)
+- **Moderação** com papéis de dono, moderador e membro. Na sessão, dono e moderadores podem controlar publicação e expulsar conforme o papel. O dono controla associação e banimento do grupo. Em grupos MLS antigos, mudanças de membros seguem o fluxo cifrado existente. Ações de sala são registradas no SQLite.
+- **Criptografia** — mídia e chat da sessão usam a criptografia do WebRTC diretamente entre navegadores, inclusive via TURN. Nas sessões novas, o servidor autenticado associa a conta à chave temporária usada para assinar o SDP. Os grupos MLS antigos continuam usando as chaves verificadas dos dispositivos. O servidor vê presença, identidade, permissões, horários e sinalização. [WebRTC RFC 8827](https://www.rfc-editor.org/rfc/rfc8827.html) · [MLS RFC 9420](https://www.rfc-editor.org/rfc/rfc9420.html) · [ts-mls](https://github.com/LukaJCB/ts-mls)
 
 ## Verificação
 

@@ -1,10 +1,9 @@
-import { createIdentity, eventStatement, packageStatement, recoveryStatement, sign, verify } from '../shared/crypto.mjs';
+import { createIdentity, eventStatement, packageStatement, sign, verify } from '../shared/crypto.mjs';
 import { changeEncryptedGroup, encryptMessage, joinEncryptedGroup, makeKeyPackage,
-  readEncryptedEvent, startGroup, wipeConsumed } from './mls.mjs';
+  readEncryptedEvent, wipeConsumed } from './mls.mjs';
 import { localGet, localSet, request } from './local.mjs';
 
 const accountKey = (username) => 'account/' + username;
-const recoveryKey = (username) => 'setup-recovery/' + username;
 const dataKey = (account, group) => 'group/' + account.id + '/' + group;
 const endpoint = (group, resource) => 'groups/' + group.id + '/' + resource;
 const emptyGroup = () => ({ seq: 0, epoch: 0, roster: [], messages: [] });
@@ -16,15 +15,19 @@ export function readInvite(hash = location.hash) {
   const params = new URLSearchParams(hash.replace(/^#/, ''));
   const invite = { token: params.get('invite'), group: params.get('group'), owner: params.get('owner') };
   return /^[a-zA-Z0-9_-]{32}$/.test(invite.token) && /^[0-9a-f-]{36}$/.test(invite.group) &&
-    /^[a-zA-Z0-9_-]{110,140}$/.test(invite.owner) ? invite : null;
+    (invite.owner === null || /^[a-zA-Z0-9_-]{110,140}$/.test(invite.owner)) ? invite : null;
 }
 
 export async function makeInvite(group, role) {
   const { token } = await request(endpoint(group, 'invite'), { role });
-  return location.origin + '/#' + new URLSearchParams({ invite: token, group: group.id, owner: group.ownerSigning }).toString();
+  const params = new URLSearchParams({ invite: token, group: group.id });
+  if (group.chat_mode === 'mls') params.set('owner', group.ownerSigning);
+  return location.origin + '/#' + params.toString();
 }
 
 async function prepareInvite(account, identity, invite) {
+  if (!invite.owner) return { token: invite.token, group: invite.group };
+  if (!identity) throw Error('Use o perfil com as chaves da conta para aceitar este convite cifrado.');
   const key = dataKey(account, invite.group);
   return locked(key, async () => {
     const stored = await localGet(key);
@@ -55,53 +58,15 @@ export async function register(form, invite) {
   });
 }
 
-async function finishRecovery(account, pending) {
-  const identity = { ...pending, id: account.id };
-  await localSet(accountKey(account.username), identity);
-  await localSet(recoveryKey(account.username), null);
-  return { account, identity };
-}
-
-export async function recoverAccount(form) {
-  const username = form.username.trim().toLowerCase();
-  return locked(accountKey(username), async () => {
-    const pending = await localGet(recoveryKey(username)) ?? await createIdentity();
-    await localSet(recoveryKey(username), pending);
-    const signature = await sign(pending.privateKey, recoveryStatement(username, pending.signing));
-    const account = await request('setup-recovery', {
-      username, password: form.password, code: form.recoveryCode, signing: pending.signing, signature,
-    });
-    return finishRecovery(account, pending);
-  });
-}
-
 export async function login(form) {
-  const username = form.username.trim().toLowerCase();
-  return locked(accountKey(username), async () => {
-    const local = await localGet(accountKey(username));
-    const pending = await localGet(recoveryKey(username));
-    const candidates = [local, pending].filter(Boolean);
-    if (!candidates.length) throw Error('As chaves desta conta não estão neste navegador. Use o mesmo perfil e endereço do cadastro.');
-    for (const identity of candidates) {
-      const { nonce } = await request('challenge', { username });
-      const signature = await sign(identity.privateKey, ['chat-p2p:login:v1', username, nonce]);
-      try {
-        const account = await request('login', { username, password: form.password, signature, nonce });
-        return identity === pending ? finishRecovery(account, pending) : { account, identity };
-      } catch (error) {
-        if (error.status !== 401 || identity === candidates.at(-1)) throw error;
-      }
-    }
-  });
+  const account = await request('login', { username: form.username, password: form.password });
+  return restore(account);
 }
 
 export async function restore(account) {
-  return locked(accountKey(account.username), async () => {
-    const identity = await localGet(accountKey(account.username));
-    if (identity?.id === account.id && identity.signing === account.signing) return { account, identity };
-    const pending = await localGet(recoveryKey(account.username));
-    return pending?.signing === account.signing ? finishRecovery(account, pending) : null;
-  });
+  const identity = await localGet(accountKey(account.username)).catch(() => null);
+  const matches = identity?.id === account.id && identity.signing === account.signing;
+  return { account, identity: matches ? identity : null };
 }
 
 export async function requestAdmission(session, invite) {
@@ -119,16 +84,8 @@ function draft(group, account, epoch, kind, fields = {}) {
   };
 }
 
-export async function newGroup(session, name) {
-  const { account, identity } = session;
-  const group = { id: crypto.randomUUID(), name };
-  const roster = [memberView({ ...account, role: 'owner' })];
-  const event = draft(group, account, 0, 'init', { roster });
-  event.signature = await sign(identity.privateKey, eventStatement(event));
-  const state = await startGroup(group.id, account);
-  await localSet(dataKey(account, group.id), { ...emptyGroup(), state, roster, pin: account.signing });
-  await request('groups', { ...group, event });
-  return group;
+export function newGroup(name) {
+  return request('groups', { id: crypto.randomUUID(), name });
 }
 
 function append(list, message) {

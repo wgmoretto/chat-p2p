@@ -33,7 +33,8 @@ export function groupService(db, hash, onRevoke) {
     SELECT groups.*, members.role, members.status, members.joined, accounts.signing AS ownerSigning
     FROM groups JOIN members ON groups.id = members.group_id
     JOIN accounts ON accounts.id = groups.owner
-    WHERE members.account = ? AND members.status IN ('pending','active') ORDER BY groups.name, groups.id
+    WHERE members.account = ? AND groups.chat_mode <> 'contact' AND members.status IN ('pending','active')
+    ORDER BY groups.name, groups.id
   `);
 
   function check(groupId, accountId, role) {
@@ -45,7 +46,10 @@ export function groupService(db, hash, onRevoke) {
   }
   function invite(token) {
     requireValue(encoded(token, 26, 100), 400, 'Convite inválido.');
-    const result = db.prepare('SELECT * FROM invites WHERE hash = ? AND expires > ?').get(hash(token), Date.now());
+    const result = db.prepare(`
+      SELECT invites.*, groups.chat_mode FROM invites JOIN groups ON groups.id=invites.group_id
+      WHERE invites.hash=? AND invites.expires>?
+    `).get(hash(token), Date.now());
     requireValue(result, 404, 'Convite expirado ou já usado.');
     return result;
   }
@@ -54,11 +58,13 @@ export function groupService(db, hash, onRevoke) {
     requireValue(link.group_id === groupId, 400, 'Este convite pertence a outro grupo.');
     const previous = member.get(link.group_id, accountId);
     requireValue(!previous || previous.status === 'removed', 409, 'Este grupo já tem uma solicitação ou um vínculo com a conta.');
+    const status = link.chat_mode === 'mls' ? 'pending' : 'active';
+    if (status === 'active') requireValue(keyList.all(groupId, 'active').length < 32, 409, 'O grupo atingiu o limite de pessoas.');
     db.prepare(`
-      INSERT INTO members (group_id,account,role,status,key_package,package_signature) VALUES (?,?,?,'pending',?,?)
-      ON CONFLICT(group_id,account) DO UPDATE SET role=excluded.role,status='pending',joined=0,
+      INSERT INTO members (group_id,account,role,status,key_package,package_signature) VALUES (?,?,?,?,?,?)
+      ON CONFLICT(group_id,account) DO UPDATE SET role=excluded.role,status=excluded.status,joined=0,
         key_package=excluded.key_package,package_signature=excluded.package_signature
-    `).run(link.group_id, accountId, link.role, keyPackage, packageSignature);
+    `).run(groupId, accountId, link.role, status, keyPackage ?? null, packageSignature ?? null);
     db.prepare('DELETE FROM invites WHERE hash = ?').run(link.hash);
   }
   const rosterRow = ({ id, name, signing, role }) => ({ id, name, signing, role });
@@ -80,26 +86,29 @@ export function groupService(db, hash, onRevoke) {
   async function initialize(account, body) {
     const { id, name } = body;
     requireValue(idPattern.test(id) && shortName(name), 400, 'Informe um nome válido para o grupo.');
-    const event = parseEvent(id, account, body.event);
-    const roster = [{ id: account.id, name: account.name, signing: account.signing, role: 'owner' }];
-    requireValue(event.kind === 'init' && event.epoch === 0 && !event.ciphertext && !event.target && !event.welcome &&
-      JSON.stringify(roster) === JSON.stringify(event.roster) &&
-      await verify(account.signing, event.signature, eventStatement(event)), 400, 'Identidade inicial do grupo inválida.');
+    const event = body.event ? parseEvent(id, account, body.event) : null;
+    if (event) {
+      const roster = [{ id: account.id, name: account.name, signing: account.signing, role: 'owner' }];
+      requireValue(event.kind === 'init' && event.epoch === 0 && !event.ciphertext && !event.target && !event.welcome &&
+        JSON.stringify(roster) === JSON.stringify(event.roster) &&
+        await verify(account.signing, event.signature, eventStatement(event)), 400, 'Identidade inicial do grupo inválida.');
+    }
     transaction(db, () => {
-      const device = db.prepare('SELECT signing FROM accounts WHERE id=?').get(account.id);
-      requireValue(device?.signing === account.signing, 401, 'Entre novamente para continuar.');
       const current = getGroup.get(id);
-      if (current && current.owner === account.id && findEvent.get(event.id)) return;
+      if (current?.owner === account.id &&
+          (event ? findEvent.get(event.id)?.group_id === id : current.chat_mode === 'session')) return;
       requireValue(!current, 409, 'Grupo já existe.');
-      db.prepare('INSERT INTO groups (id,name,owner) VALUES (?,?,?)').run(id, name.trim(), account.id);
+      db.prepare('INSERT INTO groups (id,name,owner,chat_mode) VALUES (?,?,?,?)')
+        .run(id, name.trim(), account.id, event ? 'mls' : 'session');
       db.prepare("INSERT INTO members (group_id,account,role,status) VALUES (?,?,'owner','active')").run(id, account.id);
-      insertEvent.run(event.id, id, account.id, 0, JSON.stringify(event));
+      if (event) insertEvent.run(event.id, id, account.id, 0, JSON.stringify(event));
     });
     return { id };
   }
 
   async function publish(groupId, account, body) {
-    check(groupId, account.id);
+    const { group } = check(groupId, account.id);
+    requireValue(group.chat_mode === 'mls', 404, 'Este grupo usa chat durante a sessão.');
     const event = parseEvent(groupId, account, body.event);
     const isCommit = ['add','remove','ban'].includes(event.kind);
     requireValue(['message','add','remove','ban'].includes(event.kind) &&
@@ -145,14 +154,29 @@ export function groupService(db, hash, onRevoke) {
   }
 
   return {
-    check, claim, initialize, publish,
+    check, claim, initialize, invite, publish,
     list: (accountId) => groupsForAccount.all(accountId),
     listEvents(groupId, accountId, after) {
-      const { membership } = check(groupId, accountId);
+      const { group, membership } = check(groupId, accountId);
+      requireValue(group.chat_mode === 'mls', 404, 'Este grupo usa chat durante a sessão.');
       requireValue(Number.isSafeInteger(after) && after >= 0, 400, 'Cursor inválido.');
       return db.prepare(`
         SELECT seq, payload FROM events WHERE group_id=? AND seq>? AND seq>=? ORDER BY seq LIMIT 50
       `).all(groupId, after, membership.joined).map(({ seq, payload }) => ({ seq, ...JSON.parse(payload) }));
+    },
+    people(groupId, accountId) {
+      const { group } = check(groupId, accountId);
+      requireValue(group.chat_mode !== 'contact', 404, 'Grupo indisponível.');
+      return keyList.all(groupId, 'active').map(({ id, name, role }) => ({ id, name, role }));
+    },
+    removeMember(groupId, accountId, { target, action }) {
+      const { group } = check(groupId, accountId, 'owner');
+      requireValue(group.chat_mode === 'session' && target !== accountId && idPattern.test(target) &&
+        ['remove','ban'].includes(action), 400, 'Ação de grupo inválida.');
+      const result = db.prepare("UPDATE members SET status=? WHERE group_id=? AND account=? AND status='active'")
+        .run(action === 'ban' ? 'banned' : 'removed', groupId, target);
+      if (result.changes) onRevoke(groupId, target);
+      return {};
     },
     pending(groupId, accountId) {
       check(groupId, accountId, 'owner');
@@ -171,7 +195,8 @@ export function groupService(db, hash, onRevoke) {
       return db.prepare('SELECT id,name,mode FROM rooms WHERE group_id=? ORDER BY created DESC LIMIT 100').all(groupId);
     },
     createRoom(groupId, accountId, { name, mode }) {
-      check(groupId, accountId);
+      const { group } = check(groupId, accountId);
+      requireValue(group.chat_mode !== 'contact', 404, 'Grupo indisponível.');
       requireValue(shortName(name) && ['meet','live'].includes(mode), 400, 'Informe o nome e o tipo da sala.');
       const id = randomUUID();
       db.prepare('INSERT INTO rooms (id,group_id,creator,name,mode,created) VALUES (?,?,?,?,?,?)')

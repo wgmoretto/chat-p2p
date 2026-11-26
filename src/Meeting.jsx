@@ -57,10 +57,10 @@ function RoomPeople({ state, session, connection, report }) {
 }
 
 const initial = { people: [], messages: [], status: 'Conectando', policy: {}, quality: 720 };
-export function Meeting({ room, group, session, record, leave, report, createLive }) {
+export function Meeting({ room, group, session, verified, leave, report, createLive }) {
   const runtime = useRef(null);
-  const roster = useRef(record.roster);
-  roster.current = record.roster;
+  const roster = useRef(verified);
+  roster.current = verified;
   const [state, setState] = useState(initial);
   const [tab, setTab] = useState('chat');
   const [capturing, setCapturing] = useState(false);
@@ -71,7 +71,7 @@ export function Meeting({ room, group, session, record, leave, report, createLiv
     request('groups/' + group.id + '/ice').then((ice) => connection.connect(ice)).catch(report);
     return () => { connection.onState = () => {}; connection.close(); };
   }, [room.id, group.id, session]);
-  useEffect(() => { runtime.current?.setRoster(record.roster); }, [record.roster]);
+  useEffect(() => { runtime.current?.setRoster(verified); }, [verified]);
 
   const self = state.people.find(({ self }) => self);
   const presentations = state.people.filter((person) => person.media.screen);
@@ -96,6 +96,8 @@ export function Meeting({ room, group, session, record, leave, report, createLiv
           {state.publisher && <span className="live-indicator"><Radio size={16} /> Ao vivo</span>}
           <span className="connection-indicator"><AudioLines size={16} /> {connected ? state.path ?? state.status : state.status}</span>
         </div>
+        {group.chat_mode === 'contact' && connected && people === 1 &&
+          <p className="call-waiting" role="status">Aguardando a outra pessoa entrar</p>}
         {presentations.length > 0 ? <>
           <div className="screens">{presentations.map((person) => <div className="screen" key={person.id}>
             <Media stream={person.media.screen} muted label={'Tela de ' + person.name} />
@@ -121,7 +123,7 @@ export function Meeting({ room, group, session, record, leave, report, createLiv
           ? <button disabled={!connected || state.policy.videoBlocked && state.publisher !== session.account.id || Boolean(state.publisher && state.publisher !== session.account.id)}
               onClick={() => runtime.current.send({ type: state.publisher === session.account.id ? 'live.stop' : 'live.start' })}>
             <Radio size={19} /> {state.publisher === session.account.id ? 'Encerrar live' : 'Iniciar live'}</button>
-          : <button onClick={createLive}><Radio size={19} /> Criar live</button>}
+          : createLive && <button onClick={createLive}><Radio size={19} /> Criar live</button>}
         <button className="danger" onClick={leave}><PhoneOff size={19} /> Sair da sala</button>
       </div>
       {isLive && <label className="quality">Qualidade máxima de vídeo
@@ -135,7 +137,7 @@ export function Meeting({ room, group, session, record, leave, report, createLiv
         <button aria-pressed={tab === 'chat'} onClick={() => setTab('chat')}>Chat da sala</button>
         <button aria-pressed={tab === 'people'} onClick={() => setTab('people')}>Pessoas <span>{people}</span></button>
       </div>
-      {tab === 'chat' ? <Conversation messages={state.messages} roster={record.roster} label="Chat da sala" available={connected && people > 1}
+      {tab === 'chat' ? <Conversation messages={state.messages} roster={state.people} label="Chat da sala" available={connected && people > 1}
         empty="As mensagens da sala ficam disponíveis durante esta sessão."
         onSend={(text) => {
           try { runtime.current.chat(text); return true; }

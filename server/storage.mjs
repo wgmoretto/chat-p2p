@@ -16,11 +16,9 @@ export function openDatabase(path) {
     CREATE TABLE IF NOT EXISTS sessions (
       hash TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES accounts(id), expires INTEGER NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS setup_recoveries (
-      code_hash TEXT PRIMARY KEY
-    );
     CREATE TABLE IF NOT EXISTS groups (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL REFERENCES accounts(id), epoch INTEGER NOT NULL DEFAULT 0
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL REFERENCES accounts(id), epoch INTEGER NOT NULL DEFAULT 0,
+      chat_mode TEXT NOT NULL DEFAULT 'mls' CHECK (chat_mode IN ('mls', 'session', 'contact'))
     );
     CREATE TABLE IF NOT EXISTS members (
       group_id TEXT NOT NULL REFERENCES groups(id), account TEXT NOT NULL REFERENCES accounts(id),
@@ -43,12 +41,21 @@ export function openDatabase(path) {
       name TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('meet', 'live')), created INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS rooms_by_group ON rooms(group_id, created);
+    CREATE TABLE IF NOT EXISTS friendships (
+      first TEXT NOT NULL REFERENCES accounts(id), second TEXT NOT NULL REFERENCES accounts(id),
+      requester TEXT NOT NULL REFERENCES accounts(id), room TEXT UNIQUE REFERENCES rooms(id),
+      PRIMARY KEY (first, second), CHECK (first < second), CHECK (requester IN (first, second))
+    );
+    CREATE INDEX IF NOT EXISTS friendships_by_second ON friendships(second);
     CREATE TABLE IF NOT EXISTS actions (
       id INTEGER PRIMARY KEY, room TEXT NOT NULL REFERENCES rooms(id),
       actor TEXT NOT NULL REFERENCES accounts(id), target TEXT NOT NULL REFERENCES accounts(id),
       action TEXT NOT NULL, created INTEGER NOT NULL
     );
   `);
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('groups') WHERE name='chat_mode'").get()) {
+    db.exec("ALTER TABLE groups ADD COLUMN chat_mode TEXT NOT NULL DEFAULT 'mls' CHECK (chat_mode IN ('mls', 'session', 'contact'))");
+  }
   return db;
 }
 

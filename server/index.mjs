@@ -4,9 +4,10 @@ import { promisify } from 'node:util';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { packageStatement, recoveryStatement, verify } from '../shared/crypto.mjs';
+import { packageStatement, verify } from '../shared/crypto.mjs';
 import { openDatabase, transaction } from './storage.mjs';
 import { attachRooms } from './rooms.mjs';
+import { friendService } from './friends.mjs';
 import { groupService, encoded, idPattern, shortName, HttpError, requireValue } from './groups.mjs';
 
 const derivePassword = promisify(scrypt);
@@ -68,10 +69,6 @@ export function createApplication(options = {}) {
   const cookieName = secure ? '__Host-chat-p2p' : 'chat-p2p-dev';
   const bootstrap = options.bootstrap ?? process.env.BOOTSTRAP_TOKEN ?? '';
   if (bootstrap && bootstrap.length < 24) throw new Error('BOOTSTRAP_TOKEN precisa ter pelo menos 24 caracteres.');
-  const recovery = options.recovery ?? process.env.SETUP_RECOVERY_TOKEN ?? '';
-  if (recovery && (recovery.length < 32 || recovery === bootstrap))
-    throw new Error('SETUP_RECOVERY_TOKEN precisa ter pelo menos 32 caracteres e ser diferente de BOOTSTRAP_TOKEN.');
-  const recoveryHash = recovery && hash(recovery);
   const turnSecret = options.turnSecret ?? process.env.TURN_SECRET ?? '';
   const turnUrls = (options.turnUrls ?? process.env.TURN_URLS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
   const stunUrls = (options.stunUrls ?? process.env.STUN_URLS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
@@ -86,17 +83,14 @@ export function createApplication(options = {}) {
   `);
   const countAccounts = db.prepare('SELECT count(*) AS count FROM accounts');
   const accountsByUsername = db.prepare('SELECT * FROM accounts WHERE username = ?');
-  const recoverableAccount = db.prepare(`
-    SELECT * FROM accounts
-    WHERE (SELECT count(*) FROM accounts) = 1
-      AND NOT EXISTS (SELECT 1 FROM members)
-      AND NOT EXISTS (SELECT 1 FROM setup_recoveries WHERE code_hash = ?)
-  `);
-  const challenges = new Map();
   const authLimits = new Map();
   const group = groupService(db, hash, (groupId, accountId) => runtime.revoke(groupId, accountId));
   const userData = ({ id, username, name, signing }) => ({ id, username, name, signing });
   let runtime;
+  const friends = friendService(db, {
+    occupied: (room, account) => runtime.occupied(room, account),
+    revoke: (groupId, accountId) => runtime.revoke(groupId, accountId),
+  });
 
   function authenticate(req) {
     const pair = req.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(cookieName + '='));
@@ -124,7 +118,6 @@ export function createApplication(options = {}) {
     const key = forwarded || req.socket.remoteAddress;
     const now = Date.now();
     for (const [ip, window] of authLimits) if (window.until <= now) authLimits.delete(ip);
-    for (const [key, challenge] of challenges) if (challenge.until <= now) challenges.delete(key);
     const window = authLimits.get(key) ?? { until: now + 300_000, attempts: 0 };
     authLimits.set(key, window);
     requireValue(++window.attempts <= 35 && authLimits.size <= 10000, 429, 'Aguarde antes de tentar novamente.');
@@ -132,93 +125,60 @@ export function createApplication(options = {}) {
 
   async function register(body, res) {
     const username = normalizeUsername(body.username);
-    const { id, name, password, signing, signature, invite, bootstrapToken } = body;
+    const { id, password, signing, signature, invite, bootstrapToken } = body;
+    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : username;
     requireValue(idPattern.test(id) && shortName(name) && usernameFormat.test(username) && passwordValid(password) &&
       encoded(signing, 110, 140) && encoded(signature, 86, 86),
     400, 'Preencha os dados e use uma senha com pelo menos 12 caracteres.');
-    const first = Boolean(bootstrap) && typeof bootstrapToken === 'string' && equal(bootstrapToken, bootstrap) && !countAccounts.get().count;
-    requireValue(first || invite && typeof invite === 'object', 403, 'É necessário um convite válido.');
+    const first = !countAccounts.get().count;
+    requireValue(!first || bootstrap && typeof bootstrapToken === 'string' && equal(bootstrapToken, bootstrap),
+      403, 'Código de instalação inválido.');
     requireValue(await verify(signing, signature, ['chat-p2p:register:v1', id, username]), 400, 'Chaves de dispositivo inválidas.');
-    if (!first) await validateClaim(id, signing, invite);
+    if (invite) await validateClaim(id, signing, invite);
     const passwordHash = await encodePassword(password);
     return transaction(db, () => {
       requireValue(!accountsByUsername.get(username), 409, 'Nome de usuário já está em uso.');
       requireValue(!db.prepare('SELECT 1 FROM accounts WHERE id=?').get(id), 409, 'Identidade de dispositivo já registrada.');
       requireValue(!first || !countAccounts.get().count, 409, 'A configuração inicial já foi concluída.');
       db.prepare('INSERT INTO accounts VALUES (?,?,?,?,?)').run(id, username, name.trim(), passwordHash, signing);
-      if (!first) group.claim(invite.token, invite.group, id, invite.keyPackage, invite.packageSignature);
+      if (invite) group.claim(invite.token, invite.group, id, invite.keyPackage, invite.packageSignature);
       return issueSession(res, { id, username, name: name.trim(), signing });
     });
   }
 
-  async function recover(body, res) {
-    const username = normalizeUsername(body.username);
-    const { password, code, signing, signature } = body;
-    const message = 'Código, senha ou conta indisponível para recuperação.';
-    requireValue(recoveryHash && typeof code === 'string' && equal(code, recovery), 403, message);
-    const current = recoverableAccount.get(recoveryHash);
-    requireValue(current?.username === username && passwordValid(password) && encoded(signing, 110, 140) &&
-      signing !== current.signing && encoded(signature, 86, 86) &&
-      await verify(signing, signature, recoveryStatement(username, signing)), 403, message);
-    const valid = equal(await encodePassword(password, current.password.split(':')[0]), current.password);
-    requireValue(valid, 403, message);
-    return transaction(db, () => {
-      const updated = recoverableAccount.get(recoveryHash);
-      requireValue(updated?.id === current.id && updated.signing === current.signing && updated.password === current.password,
-        403, message);
-      db.prepare('UPDATE accounts SET signing=? WHERE id=?').run(signing, current.id);
-      db.prepare('DELETE FROM sessions WHERE account=?').run(current.id);
-      db.prepare('INSERT INTO setup_recoveries VALUES (?)').run(recoveryHash);
-      return issueSession(res, { ...current, signing });
-    });
-  }
-
-  async function validateClaim(id, signing, { token, group, keyPackage, packageSignature }) {
-    requireValue(encoded(token, 26, 100) && idPattern.test(group) && encoded(keyPackage, 80, 16000) &&
-      encoded(packageSignature, 86, 86) && await verify(signing, packageSignature, packageStatement(id, group, keyPackage)),
-      400, 'Convite ou chaves de dispositivo inválidas.');
+  async function validateClaim(id, signing, claim) {
+    requireValue(typeof claim === 'object' && idPattern.test(claim?.group), 400, 'Convite inválido.');
+    const { token, group: groupId, keyPackage, packageSignature } = claim;
+    const invite = group.invite(token);
+    requireValue(invite.group_id === groupId, 400, 'Este convite pertence a outro grupo.');
+    if (invite.chat_mode === 'mls') {
+      requireValue(encoded(keyPackage, 80, 16000) && encoded(packageSignature, 86, 86) &&
+        await verify(signing, packageSignature, packageStatement(id, groupId, keyPackage)),
+        400, 'Convite ou chaves de dispositivo inválidas.');
+    }
   }
 
   async function api(req, res, url) {
     const { pathname } = url;
     const method = req.method;
     const account = authenticate(req);
-    if (method === 'GET' && pathname === '/api/session')
-      return {
-        account: account ? userData(account) : null,
-        bootstrap: Boolean(bootstrap) && !countAccounts.get().count,
-        recovery: Boolean(recoveryHash && recoverableAccount.get(recoveryHash)),
-      };
+    if (method === 'GET' && pathname === '/api/session') {
+      const initialized = !!countAccounts.get().count;
+      return { account: account ? userData(account) : null, signup: initialized || !!bootstrap,
+        bootstrap: !!bootstrap && !initialized };
+    }
     if (method === 'POST') requireValue(req.headers.origin === origin, 403, 'Origem da requisição inválida.');
     if (method === 'POST' && pathname === '/api/register') {
       limitAuth(req);
       return register(await payload(req), res);
     }
-    if (method === 'POST' && pathname === '/api/setup-recovery') {
-      limitAuth(req);
-      return recover(await payload(req), res);
-    }
-    if (method === 'POST' && pathname === '/api/challenge') {
-      limitAuth(req);
-      const username = normalizeUsername((await payload(req)).username);
-      requireValue(usernameFormat.test(username) && challenges.size < 3000, 400, 'Usuário inválido.');
-      const nonce = randomToken();
-      challenges.set(nonce, { username, until: Date.now() + 60_000 });
-      return { nonce };
-    }
     if (method === 'POST' && pathname === '/api/login') {
       limitAuth(req);
-      const { username: input, password, nonce, signature } = await payload(req);
-      const username = normalizeUsername(input);
-      const challenge = challenges.get(nonce);
-      challenges.delete(nonce);
-      const target = accountsByUsername.get(username);
-      requireValue(target && passwordValid(password) && encoded(signature, 86, 86) &&
-        challenge?.username === username && challenge.until > Date.now() &&
-        await verify(target.signing, signature, ['chat-p2p:login:v1', username, nonce]),
-      401, 'Usuário, senha ou dispositivo inválido.');
+      const { username: input, password } = await payload(req);
+      const target = accountsByUsername.get(normalizeUsername(input));
+      requireValue(target && passwordValid(password), 401, 'Usuário ou senha inválidos.');
       const valid = equal(await encodePassword(password, target.password.split(':')[0]), target.password);
-      requireValue(valid && accountsByUsername.get(username)?.signing === target.signing, 401, 'Usuário, senha ou dispositivo inválido.');
+      requireValue(valid, 401, 'Usuário ou senha inválidos.');
       return issueSession(res, target);
     }
 
@@ -229,6 +189,17 @@ export function createApplication(options = {}) {
       res.setHeader('Set-Cookie', cookie('', 0));
       return {};
     }
+    if (pathname === '/api/friends') {
+      if (method === 'GET') return friends.list(account.id);
+      if (method === 'POST') {
+        limitAuth(req);
+        return friends.request(account.id, (await payload(req)).username);
+      }
+    }
+    if (method === 'POST' && pathname === '/api/friends/action') {
+      const { id, action } = await payload(req);
+      return friends.update(account.id, id, action);
+    }
     if (method === 'GET' && pathname === '/api/groups') return group.list(account.id);
     if (method === 'POST' && pathname === '/api/groups') return group.initialize(account, await payload(req));
     if (method === 'POST' && pathname === '/api/claim') {
@@ -237,12 +208,14 @@ export function createApplication(options = {}) {
       transaction(db, () => group.claim(claim.token, claim.group, account.id, claim.keyPackage, claim.packageSignature));
       return {};
     }
-    const route = pathname.match(/^\/api\/groups\/([0-9a-f-]{36})\/(events|pending|invite|rooms|ice)$/);
+    const route = pathname.match(/^\/api\/groups\/([0-9a-f-]{36})\/(events|pending|people|invite|rooms|ice)$/);
     if (route) {
       const [, id, part] = route;
       if (method === 'GET' && part === 'events') return group.listEvents(id, account.id, Number(url.searchParams.get('after') ?? 0));
       if (method === 'POST' && part === 'events') return group.publish(id, account, await payload(req));
       if (method === 'GET' && part === 'pending') return group.pending(id, account.id);
+      if (method === 'GET' && part === 'people') return group.people(id, account.id);
+      if (method === 'POST' && part === 'people') return group.removeMember(id, account.id, await payload(req));
       if (method === 'POST' && part === 'invite') return group.issueInvite(id, account.id, (await payload(req)).role);
       if (method === 'GET' && part === 'rooms') return group.listRooms(id, account.id);
       if (method === 'POST' && part === 'rooms') return group.createRoom(id, account.id, await payload(req));

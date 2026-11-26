@@ -22,7 +22,7 @@ export default defineConfig({
     reuseExistingServer: false,
     env: {
       PUBLIC_ORIGIN: origin, BOOTSTRAP_TOKEN: 'local-browser-test-bootstrap-key',
-      SETUP_RECOVERY_TOKEN: 'local-only-test-browser-recovery-code', DATABASE_PATH: ':memory:', PORT: '3190',
+      DATABASE_PATH: ':memory:', PORT: '3190',
     },
   },
 });
